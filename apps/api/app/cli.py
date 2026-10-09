@@ -37,7 +37,8 @@ def grant_admin(email: str, note: str) -> None:
         conn.execute(
             text(
                 "INSERT INTO audit_events (actor_type, action, entity_type, entity_id, data) "
-                "VALUES ('SYSTEM', 'admin.granted', 'user', :u, jsonb_build_object('note', :n))"
+                "VALUES ('SYSTEM', 'admin.granted', 'user', :u, "
+                "jsonb_build_object('note', CAST(:n AS text)))"
             ),
             {"u": user_id, "n": note[:200]},
         )

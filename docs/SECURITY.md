@@ -19,15 +19,20 @@
 6. **Atomic and idempotent** financial operations (see "Transaction pattern" and
    "Idempotency" below).
 
-## Database security model (Phase 1A)
+## Database security model
 
 ### Roles
 
-| Role | Purpose | Attributes |
+| Role | Used by | Attributes |
 |---|---|---|
-| `POSTGRES_USER` (superuser) | Initialises a fresh volume only. Nothing at runtime uses it. | superuser |
-| `safepay_migrator` | Owns the `public` schema and **every** table, trigger and function. Used only by `alembic upgrade`. | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` |
-| `safepay_app` | The API's runtime role. | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`, `CONNECTION LIMIT 50`; default `statement_timeout=15s`, `lock_timeout=5s`, `idle_in_transaction_session_timeout=30s` |
+| `POSTGRES_USER` (superuser) | Initialising a fresh volume only. Nothing at runtime uses it. | superuser |
+| `safepay_migrator` | `alembic upgrade` and the `app.cli` admin grant tool. Owns the `public` schema and **every** table, trigger and function. | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` |
+| `safepay_app` | The public API (`api` service). | `NOSUPERUSER … NOINHERIT`, `CONNECTION LIMIT 50`; default `statement_timeout=15s`, `lock_timeout=5s`, `idle_in_transaction_session_timeout=30s` |
+| `safepay_system` | The background `worker` only (expiry, auto-release). | `NOSUPERUSER … NOINHERIT`, `CONNECTION LIMIT 5` |
+| `safepay_admin` | The separate `admin-api` service only. | `NOSUPERUSER … NOINHERIT`, `CONNECTION LIMIT 10` |
+
+Each service receives **only its own** credential; the public API container holds no
+system or admin credential (CI checks this on the live Compose stack).
 
 The timeouts are **defaults, not security controls**: any role may change its own
 user-settable parameters (`SET`, or `ALTER ROLE safepay_app SET …`). They protect
@@ -56,19 +61,44 @@ Three gates enforce the role split:
 3. `GET /ready` returns **503** if the API's connection is a superuser, can
    bypass RLS, or owns any object in `public`.
 
-### What the application role can do
+### What each runtime role can do (migration 0003)
 
-| Table | SELECT | INSERT | UPDATE | DELETE / TRUNCATE |
-|---|---|---|---|---|
-| `ledger_accounts`, `ledger_transactions`, `ledger_entries` | ✅ | ❌ | ❌ | ❌ |
-| `audit_events` | ✅ | ✅ (timestamp forced by DB) | ❌ | ❌ |
-| `deals` | ✅ | ✅ (DRAFT, version 1 only) | `title, description, amount_mnt, version, updated_at` — **not `status`** | ❌ |
-| `deal_participants` | ✅ | ✅ (before acceptance) | `accepted_at` (once; DB sets the time) | ❌ |
-| `users` | ✅ | ✅ | `display_name, status, updated_at` | ❌ |
-| `idempotency_records` | ✅ | ✅ (claim only) | `response, completed_at` (once) | ❌ |
-| `deal_transitions`, `alembic_version` | ✅ | ❌ | ❌ | ❌ |
+Generated from `information_schema` on a database at head `0003`.
 
-The only function the app may execute is `safepay_transition_deal(...)`.
+| Table | `safepay_app` (public API) | `safepay_system` (worker) | `safepay_admin` (admin API) |
+|---|---|---|---|
+| `ledger_accounts`, `ledger_transactions`, `ledger_entries` | SELECT | – | SELECT |
+| `audit_events` | SELECT, INSERT (timestamp forced by DB) | – | SELECT |
+| `deals` | SELECT, INSERT (DRAFT, v1 only); UPDATE of draft terms + invite columns only — **never `status`** | SELECT | SELECT |
+| `deal_participants` | SELECT, INSERT (before acceptance) — **no UPDATE** (acceptance only via the transition function) | – | SELECT |
+| `users` | SELECT, INSERT; UPDATE `display_name, phone_e164, password_hash, email_verified_at, updated_at` — **not `status`** | – | SELECT |
+| `admins` | SELECT | – | SELECT |
+| `sessions` | SELECT, INSERT; UPDATE `last_seen_at, revoked_at` | – | SELECT |
+| `auth_tokens` | SELECT, INSERT; UPDATE `used_at` | – | – |
+| `disputes` | SELECT | – | SELECT |
+| `dispute_evidence` | SELECT, INSERT (participants, open dispute; append-only) | – | SELECT, INSERT (admin notes) |
+| `notifications` | SELECT, INSERT; UPDATE `read_at` | – | – |
+| `email_outbox`, `rate_limits` | SELECT, INSERT (`rate_limits.count` UPDATE) | SELECT, DELETE (cleanup) | – |
+| `idempotency_records` | SELECT, INSERT (claim); UPDATE `response, completed_at` once | – | – |
+| `deal_transitions`, `alembic_version` | SELECT | `alembic_version` | SELECT |
+
+Function `EXECUTE` (verified by `tests/integration/test_role_matrix.py`):
+
+| Function | app | system | admin |
+|---|---|---|---|
+| `safepay_transition_deal(deal, action, user, version, note, request_id)` — actor **derived** from `deal_participants` | ✅ | ❌ | ❌ |
+| `safepay_system_transition_deal(deal, action, request_id)` — EXPIRE / AUTO_RELEASE, **re-checks** the 7-day expiry and inspection window in SQL | ❌ | ✅ | ❌ |
+| `safepay_admin_transition_deal`, `safepay_admin_resolve_dispute`, `safepay_admin_set_user_status` — require an ACTIVE row in `admins`; an admin can never act on a deal they participate in, nor change their own status | ❌ | ❌ | ✅ |
+| `safepay__apply_transition` (internal), all trigger functions | ❌ | ❌ | ❌ |
+
+No runtime role can write to `admins`; admins are granted only with
+`python -m app.cli grant-admin <email>` using the owner (migrator) credential, which is audited.
+
+The deferred integrity checks (ledger balanced, no negative escrow/wallet, idempotency
+completion) are `SECURITY DEFINER`: they fire at `COMMIT`, outside the transition
+function, so they must not depend on what the calling role may read. (Before this,
+the worker's AUTO_RELEASE failed because `safepay_system` cannot read the ledger —
+found by the role-matrix tests.)
 
 ### Money moves only through `safepay_transition_deal`
 
@@ -148,14 +178,12 @@ Limitations of this design:
 - The rules exist in two places: `deal_transitions` (seeded by migration 0002)
   and `app/domain/deal_states.py`. An integration test fails if they differ;
   changing the rules needs a new migration.
-- The database trusts the `actor` and `actor_user_id` the API passes in. It checks
-  participation, but **authentication** (proving who the caller is) arrives in
-  Phase 1B.
-- There is no admin registry yet: any ACTIVE user id is accepted as ADMIN. The API
-  must not expose ADMIN actions before authorization exists.
-- A `SECURITY DEFINER` function is powerful. It is owned by a non-superuser,
-  pins `search_path`, and is the only function `safepay_app` may execute. Review
-  every change to it as security-critical.
+- Since migration 0003 the public function no longer accepts an `actor`: it derives
+  BUYER/SELLER from `deal_participants` for the session's user. SYSTEM and ADMIN go
+  through separate functions granted to separate roles (see the tables above).
+- `SECURITY DEFINER` functions are powerful. They are owned by a non-superuser,
+  pin `search_path`, and each runtime role may execute exactly its own entry point.
+  Review every change to them as security-critical.
 - The migrator owns the tables and could disable triggers. It is a deployment
   credential, never used at runtime, and should be stored and rotated separately.
 
@@ -174,31 +202,41 @@ with atomic(session):            # exactly one DB transaction; refuses nesting
 ## Trust boundary: who is the acting user?
 
 ```
- client ──(no route exists in Phase 1A)──▶ API process ──safepay_app──▶ safepay_transition_deal
-                                            │ supplies actor + actor_user_id   │ verifies: participant,
-                                            │ (must come from an authenticated │ legal transition, ADMIN
-                                            │  session in Phase 1B)            │ is an ACTIVE user
+ browser ──HTTPS──▶ web (Next.js) ──/api/* proxy──▶ api (safepay_app) ──▶ safepay_transition_deal(user from session)
+                         │  allow-listed headers         └ identity = server-side session; actor derived in SQL
+                         └──/api/admin/*──────────▶ admin-api (safepay_admin) ──▶ safepay_admin_* (user must be in admins)
+                                                   worker (safepay_system) ──▶ safepay_system_transition_deal (eligibility re-checked)
 ```
 
-* The database verifies **participation and state**, not **identity**. Whoever holds
-  the `safepay_app` credential can act as any buyer or seller of any deal, as
-  SYSTEM (for example `AUTO_RELEASE`, which pays the seller), or as ADMIN with any
-  active user id. The API process and its credential are therefore inside the
-  trust boundary.
-* **Phase 1A exposes no such route.** The only HTTP routes are `GET /health`,
-  `GET /ready` and the docs. `tests/unit/test_exposed_surface.py` fails if any other
-  route is added, or if the HTTP layer imports `app.services`.
-* **Before any money-moving endpoint is exposed (Phase 1B), all of these are required:**
-  1. Authentication. `actor_user_id` must come from the server-side session, never
-     from the request body.
-  2. The API derives `actor` (BUYER/SELLER) from the deal participants. It never
-     accepts it from the client.
-  3. SYSTEM transitions only from a scheduler. Ideally that runs as a separate
-     database role allowed to call a SYSTEM-only function, so the web-facing API
-     cannot `AUTO_RELEASE`.
-  4. ADMIN transitions only for users in an admin registry, behind separate
-     authorization, ideally also via a separate role or function.
-  5. An `Idempotency-Key` header (scoped per user, see below), and rate limiting.
+* **Identity always comes from the session cookie**, looked up server-side. No route
+  accepts `actor`, `actor_user_id` or `acting_user_id`; unknown JSON fields are ignored
+  and `tests/unit/test_exposed_surface.py` fails if any request model declares one.
+* **BUYER/SELLER is derived by the database** from `deal_participants`. A non-participant
+  gets `404` (no existence oracle) from every deal, dispute and evidence route.
+* **SYSTEM authority lives only in the worker's role**, and the SQL function re-checks
+  that the deal is actually eligible, so even a stolen worker credential cannot release
+  money early.
+* **ADMIN authority lives only in the admin API's role**, and each admin function
+  re-checks the `admins` registry. The public API does not mount `/admin` at all.
+* The holder of a role credential is still trusted for that role's scope. Protect each
+  like a payment key; they are separate so a public-API compromise cannot pay out.
+
+## Application security (Beta v0.1)
+
+| Control | Implementation |
+|---|---|
+| Passwords | Argon2id (argon2-cffi defaults), 10–128 chars, common-password and email-equal checks, transparent rehash. Unknown emails verify against a dummy hash (timing). |
+| Account enumeration | Register, resend, reset-request return the same response for known and unknown emails; login failures are identical. Tested. |
+| Sessions | 256-bit random token in an `HttpOnly; SameSite=Lax; Path=/` cookie (`__Host-` + `Secure` when `COOKIE_SECURE`/non-local). DB stores SHA-256 only. Absolute 7-day and idle 24-hour expiry. Revoked on logout, password change (other sessions), password reset (all) and suspension (all). |
+| CSRF | Synchronizer token: `safepay_csrf` cookie must equal `X-CSRF-Token` and match the session's stored hash, on every authenticated unsafe request. Plus an **Origin allow-list** check on all unsafe requests (also blocks login CSRF). |
+| Rate limits | DB-backed fixed windows: login per IP and per email, registration per IP, email actions per IP and per address, token attempts per IP, mutations per user, evidence uploads per user. |
+| Email tokens | Single-use, hashed, short-lived (verify 24 h, reset 1 h); verification requires a click (link scanners can't consume it). |
+| Idempotency | `Idempotency-Key` header required on every deal action, scoped per user; the UI generates one key per confirmation dialog so double clicks and retries execute once (E2E-tested). |
+| Evidence files | ≤ 2 MB; type **sniffed** from magic bytes (PNG, JPEG, PDF only; SVG/HTML rejected); file names sanitized; served only to participants/admins as `attachment` with `nosniff`, `CSP: sandbox` and `no-store`. Append-only. |
+| Admin notes | Never returned to participants (regression-tested). |
+| Web proxy | Only an allow-list of request headers is forwarded (`cookie`, `content-type`, `x-csrf-token`, `idempotency-key`, `origin`, …); `/health`, `/ready`, `/docs` are not exposed through it; path segments are validated (no traversal or encoded slashes); bodies capped at 3 MB. |
+| Redirects | Post-login `next` accepts only same-site relative paths (unit + E2E tested). |
+| Dev mailbox | `/dev/mailbox` exists only when `APP_ENV` is `local`/`test` **and** `DEV_MAILBOX_ENABLED=true`; never in staging/production (unit-tested). |
 
 ## Idempotency
 
@@ -278,35 +316,32 @@ as `safepay_migrator`.
   - Proves the migration refuses a superuser.
   - Proves the live Compose stack refuses tampering by the app role.
 
-## Remaining risks and required work
+## Remaining risks and required work (before a private beta)
 
-* **Authentication and authorization** (Phase 1B): phone OTP, sessions
-  (`HttpOnly; Secure; SameSite=Lax`), CSRF protection, rate limiting, an admin
-  registry and per-endpoint authorization.
-* **Participant and draft writes are not authorized per user yet.** The app role can
-  add participants to any DRAFT or PENDING_ACCEPTANCE deal and edit DRAFT terms; the
-  database limits *what* can change, but *who* may do it needs Phase 1B auth.
-* **Holder of the `safepay_app` credential** can impersonate any participant,
-  SYSTEM or ADMIN through `safepay_transition_deal` (see "Trust boundary"). Protect the
-  credential like a payment key. Splitting SYSTEM and ADMIN into separate roles is
-  recommended for Phase 1B.
-* **Availability:** the app role can hold row locks on deals and claims, and can
-  raise its own timeouts. A leaked credential could therefore cause lock contention,
-  but not financial changes.
-* **Lock waits:** `lock_timeout=5s` for the app role means a request that waits
-  behind a long-running transition on the same deal or idempotency key fails
-  instead of hanging; clients should retry with the same key.
-* **App-written audit events** (non-financial) still carry an actor chosen by the app.
-  Financial transitions are audited by the database function.
-* **Tamper evidence:** a hash chain over audit rows and a periodic reconciliation
-  job (total debits = total credits; escrow = amount for FUNDED, DELIVERED and
-  DISPUTED deals).
-* **Operations:**
-  - TLS termination at a reverse proxy, HSTS and a Content-Security-Policy;
-  - backups with tested restores;
-  - log shipping without PII;
-  - credential rotation for all three database roles.
-* **Privacy:** minimal personal data, a retention policy, and compliance with
-  Mongolia's Law on Personal Data Protection (2021).
-* **Dependencies:** the dev-only `braces` advisory in the ESLint toolchain has no
-  upstream fix yet; re-check periodically.
+* **Client IP behind proxies.** The API trusts the first `X-Forwarded-For` hop only when
+  `TRUST_PROXY_HEADERS=true`, and the web proxy forwards the right-most hop it received.
+  Next.js fills `X-Forwarded-For` from the socket only when the header is absent, so
+  **production must run a reverse proxy that overwrites `X-Forwarded-For`** (e.g. nginx
+  `proxy_set_header X-Forwarded-For $remote_addr`). Without it, per-IP limits can be
+  evaded by spoofing the header (per-account limits still apply). The API port should
+  not be published publicly.
+* **No real email delivery.** Verification and reset emails go to `email_outbox`; a
+  transactional email provider (with SPF/DKIM) is needed before real users.
+* **No MFA / step-up auth for admins.** Admin sessions are ordinary sessions on the
+  admin API. Add TOTP/WebAuthn and IP allow-listing for `/admin` before a beta.
+* **Security headers.** `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+  `Permissions-Policy` are set; a strict Content-Security-Policy and HSTS (at the TLS
+  proxy) are still to do.
+* **Tamper evidence:** a hash chain over audit rows and a periodic reconciliation job
+  (total debits = total credits; escrow = amount for FUNDED/DELIVERED/DISPUTED deals).
+* **Data protection:** retention policy for sessions, evidence files and the outbox;
+  evidence is stored in PostgreSQL (fine at ≤ 2 MB per file for a beta, move to object
+  storage with encryption later); compliance with Mongolia's Law on Personal Data
+  Protection (2021).
+* **Operations:** TLS, backups with tested restores, log shipping without PII,
+  credential rotation for all five database roles, monitoring of worker passes.
+* **Abuse:** no KYC, fraud scoring or deal-amount limits per user beyond the global
+  100 ₮ – 100 bn ₮ range. All money is simulated, so this is acceptable only while the
+  product stays a simulation.
+* **Dependencies:** `npm audit --omit=dev` is clean; dev-only advisories in the lint
+  toolchain are tracked in CI.

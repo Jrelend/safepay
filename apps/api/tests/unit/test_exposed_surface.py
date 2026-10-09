@@ -97,7 +97,8 @@ def _walk(routes: Iterable[Any], prefix: str = "") -> set[tuple[str, str]]:
 
 
 def _settings(**overrides: Any) -> Settings:
-    return Settings(**overrides)
+    # Ignore any developer .env: the surface must be judged on explicit settings only.
+    return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]
 
 
 def test_public_api_surface_is_exactly_the_allow_list() -> None:

@@ -29,8 +29,8 @@
 | M2 | Auth API: register/verify/login/logout/reset/change, sessions, CSRF, rate limits, profile, suspension; tests | ✅ |
 | M3 | Deals API: create/edit/invite/join/accept/reject/cancel/fund/deliver/release/refund, history, timeline, wallet; IDOR tests | ✅ |
 | M4 | Disputes + evidence, admin-api (review, decision, suspension), worker (expiry, auto-release); privilege tests | ✅ |
-| M5 | Mongolian mobile-first UI: all pages | ⏳ |
-| M6 | Compose (admin-api, worker) ✅, CI roles ✅, Playwright E2E, docs, final PR | ⏳ |
+| M5 | Mongolian mobile-first UI: all pages | ✅ |
+| M6 | Compose (admin-api, worker), CI roles + E2E job, Playwright E2E, docs, final PR | ✅ |
 
 ## Bugs found by the M2–M4 HTTP/role tests (fixed)
 
@@ -38,5 +38,7 @@
   caller's privileges, and `safepay_system` cannot read the ledger, so every AUTO_RELEASE
   failed. The deferred integrity checks are now `SECURITY DEFINER` (migration 0003).
   Regression: `test_role_matrix.py::test_worker_expires_and_auto_releases_only_eligible_deals`.
+- **Admin grant CLI crashed** (`IndeterminateDatatype` on the audit note) — never
+  exercised before E2E. Fixed with an explicit cast; `tests/integration/test_admin_cli.py`.
 - **Admin notes leaked to participants** in the dispute view. Fixed in
   `services/disputes.view`. Regression: `test_admin_decision_refunds_and_is_audited`.

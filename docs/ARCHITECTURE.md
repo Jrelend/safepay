@@ -1,4 +1,4 @@
-# SafePay architecture (Beta v0.1, Phase 0 + Phase 1A)
+# SafePay architecture (Beta v0.1)
 
 > SafePay is an escrow **simulation**. It never accepts, holds or transfers real
 > money, and has no payment-provider integration.
@@ -10,16 +10,19 @@ safepay/
 ├── apps/
 │   ├── api/                 FastAPI + SQLAlchemy 2 + Alembic (Python 3.13, uv)
 │   │   ├── app/
-│   │   │   ├── api/         HTTP routers (health/readiness for now)
+│   │   │   ├── api/         HTTP routers: auth, me, deals, disputes, admin, dev mailbox
 │   │   │   ├── core/        settings (pydantic-settings)
 │   │   │   ├── db/          engine / session factory, atomic() transaction helper
 │   │   │   ├── domain/      pure logic: money, deal state machine, ledger rules
 │   │   │   ├── models/      ORM models
-│   │   │   └── services/    idempotency + deal transitions (no HTTP endpoints yet)
-│   │   ├── migrations/      Alembic: 0001 schema + ledger triggers, 0002 database security
+│   │   │   ├── services/    accounts, deals, disputes, transitions, idempotency, rate limits
+│   │   │   ├── worker.py    expiry + auto-release loop (safepay_system role)
+│   │   │   └── cli.py       grant-admin / revoke-admin (owner credential)
+│   │   ├── migrations/      0001 schema + ledger triggers, 0002 database security, 0003 accounts/deals/disputes
 │   │   └── tests/           unit/ (no DB) and integration/ (real PostgreSQL)
-│   └── web/                 Next.js 16 (App Router) + Tailwind CSS 4, Mongolian UI
+│   └── web/                 Next.js 16 (App Router) + Tailwind CSS 4, Mongolian UI, /api proxy, Playwright e2e/
 ├── infra/postgres/          role bootstrap SQL + Docker initdb hook
+├── scripts/e2e-stack.sh     disposable stack for browser E2E
 ├── docs/                    this documentation
 ├── compose.yaml             production-like stack (local + future VPS)
 ├── compose.dev.yaml         hot-reload override
@@ -30,31 +33,51 @@ safepay/
 
 ```
  browser ──HTTPS──▶ [reverse proxy, VPS only] ──▶ web (Next.js, :3000)
-                                                   │ server-side fetch
+                                                   │ /api/*        → api       (FastAPI, API_MODE=public)  ── safepay_app
+                                                   │ /api/admin/*  → admin-api (FastAPI, API_MODE=admin)   ── safepay_admin
                                                    ▼
-                                                 api (FastAPI, :8000) ──▶ db (PostgreSQL 17)
+                                                 db (PostgreSQL 17) ◀── worker (python -m app.worker)     ── safepay_system
                                                    ▲
-                                 migrate (one-shot: alembic upgrade head)
-
- db roles:  migrate ── safepay_migrator (owns schema)   api ── safepay_app (least privilege)
+                                 migrate (one-shot: alembic upgrade head)          ── safepay_migrator
 ```
 
-* **web** renders the UI only. It never talks to the database and never decides a
-  deal's state; it shows what the API returns. API calls are made
-  server-side (`API_INTERNAL_URL`), so the API does not need to be public.
-* **api** is the single authority over deal state and the simulated ledger.
-* **migrate** runs Alembic as `safepay_migrator` before `api` starts
-  (`service_completed_successfully`), so the API never serves against an old
-  schema. `/ready` also reports 503 if the schema is not at the expected Alembic
-  head, or if the API is connected as anything more powerful than `safepay_app`.
+* **web** serves the UI and a same-origin **proxy** (`src/app/api/[...path]/route.ts`).
+  The browser never talks to the API host, so session cookies are first-party
+  (`SameSite=Lax`, `__Host-` when secure) and no CORS is needed. The proxy forwards an
+  explicit header allow-list and routes `/api/admin/*` to the admin API only.
+  Authenticated pages are client-rendered against the proxy; server components never
+  read the session, so no user data enters the Next.js cache.
+* **api** (public) is the authority over deals and the simulated ledger, as `safepay_app`.
+* **admin-api** is the same image with `API_MODE=admin`: it mounts only `/admin/*` and
+  auth-reading routes, runs as `safepay_admin`, and is not published on the host.
+* **worker** runs a pass every `WORKER_INTERVAL_SECONDS`: expire deals idle for 7 days
+  in PENDING_ACCEPTANCE/AWAITING_PAYMENT, auto-release DELIVERED deals after their
+  inspection window, clean old rate-limit windows and outbox rows. The SQL function
+  re-checks eligibility, so the worker cannot release early.
+* **migrate** runs Alembic as `safepay_migrator` before the services start.
+  `/ready` returns 503 if the schema is not at head or the role is too powerful.
 * **db** is reachable only on the internal `backend` network.
+
+### Request flow for a money action
+
+1. The deal page opens a confirmation dialog; it creates one `Idempotency-Key` per
+   dialog (double clicks and retries reuse it) and shows
+   **"ТУРШИЛТЫН ТӨЛБӨР — БОДИТ МӨНГӨ БИШ"**.
+2. `POST /api/deals/{id}/actions` → proxy → API: Origin check, session cookie,
+   CSRF token, rate limit, participant check (404 otherwise).
+3. `run_idempotent(scope="deal.transition:<user>")` → `safepay_transition_deal`,
+   which locks the deal, derives the actor, checks the transition, posts the
+   balanced ledger transaction, bumps the version, writes audit + notifications.
+4. COMMIT runs the deferred checks (balanced, non-negative, idempotency complete).
 
 ## Data model
 
 | Table | Purpose |
 |---|---|
-| `users` | Participant identity (E.164 phone, display name, status). |
-| `deals` | Escrow agreement: title, `amount_mnt` (BIGINT > 0), `currency` = `MNT`, `status`, optimistic-lock `version`. |
+| `users` | Email (normalized, unique), Argon2id hash, verified-at, display name, optional phone, status. |
+| `sessions`, `auth_tokens`, `email_outbox`, `rate_limits`, `admins` | Auth: hashed session/one-time tokens, simulated email, fixed-window limits, admin registry. |
+| `disputes`, `dispute_evidence`, `notifications` | One dispute per deal; append-only statements/files/admin notes; per-user notifications written by the transition function. |
+| `deals` | Escrow agreement: title, `amount_mnt` (BIGINT, 100 – 100 bn), `currency` = `MNT`, item type, delivery method, inspection days, hashed invite token, `status`, optimistic-lock `version`. |
 | `deal_participants` | Exactly one BUYER and one SELLER per deal; a user cannot be both. |
 | `ledger_accounts` | Chart of accounts: `SIMULATED_CASH` (asset), `USER_WALLET` / `DEAL_ESCROW` (liability), `FEE_REVENUE` (revenue). **No balance column.** |
 | `ledger_transactions` | Journal header with a unique `idempotency_key`; optional `reverses_transaction_id` for corrections. Append-only. |
@@ -161,7 +184,13 @@ Every API response carries `X-Request-ID`, `X-SafePay-Simulation: true` and
   Mongolian Cyrillic (Ө, Ү) fully, so no font is downloaded at build time.
 * Mobile-first: `max-w-md` column, sticky header, bottom navigation with
   safe-area padding, touch targets ≥ 48 px, light and dark themes.
-* A permanent banner says that all payments are simulated.
+* A permanent banner says that all payments are simulated; every screen showing or
+  moving money adds the **"ТУРШИЛТЫН ТӨЛБӨР — БОДИТ МӨНГӨ БИШ"** notice.
+* Unit tests also keep deal actions and API error codes (Mongolian messages) in sync
+  with the backend source.
+* Playwright E2E (`apps/web/e2e`, Pixel 7 viewport) drives the real stack: full escrow
+  flow, double-click funding, dispute → admin refund, IDOR, CSRF/Origin, cookie flags,
+  logout, open redirect.
 * `formatMnt` handles BIGINT-sized amounts via `bigint` (no float rounding).
 * A unit test parses the backend `DealStatus` enum and fails if the frontend
   status list drifts from it.

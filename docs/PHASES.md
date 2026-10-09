@@ -6,40 +6,33 @@ Monorepo, FastAPI and Next.js apps, PostgreSQL 17 with Alembic, an initial schem
 DB-enforced ledger and audit invariants, a pure deal state machine, a Mongolian
 mobile-first UI shell, health and readiness endpoints, Docker Compose, CI and docs.
 
-## Phase 1A: Database security ✅ (in review)
+## Phase 1A: Database security ✅ (merged)
 
 * Separate `safepay_migrator` / `safepay_app` roles, least-privilege grants, and role
   checks in migrations and `/ready`.
-* The `safepay_transition_deal` SECURITY DEFINER function: row lock, DB-enforced
-  transitions and actor checks, atomic escrow posting, version bump, audit event.
-* No double funding, release or refund (deterministic keys plus partial unique
-  indexes).
-* A reusable idempotency service (replay, 409 on mismatch, concurrency-safe) and an
-  `atomic()` transaction pattern.
-* Server-generated audit and acceptance timestamps; guard triggers.
-* Integration tests for privilege escalation, tampering, races and rollback.
+* The SECURITY DEFINER transition function: row lock, DB-enforced transitions and
+  actor checks, atomic escrow posting, version bump, audit event.
+* No double funding, release or refund; idempotency service; guard triggers.
 
-## Phase 1B: Authentication and deal API (needs approval)
+## Beta v0.1 (this PR) — see `BETA_PLAN.md`
 
-* Phone-based sign-up and login (OTP simulated in dev), sessions, rate limits, CSRF.
-* An admin registry, so ADMIN transitions require a real admin.
-* HTTP endpoints over the Phase 1A services: create deal → invite → accept;
-  fund (simulated) → deliver → confirm/release; refund. `Idempotency-Key`
-  header → `run_idempotent`; `IdempotencyKeyReusedError` → 409.
-* API amounts serialized as strings; deal list and detail pages in Mongolian.
-* Playwright end-to-end tests of the happy path.
+Phases 1B–5 of the beta brief, all with **simulated** payments only.
 
-## Phase 2: Disputes and operations
+| Area | Status | Notes |
+|---|---|---|
+| Auth & security (1B) | ✅ | Email + password (Argon2id), email verification, password reset/change, sessions with expiry and revocation, CSRF + Origin, rate limits, no enumeration, profile, suspension. Phone OTP replaced by email (no SMS provider in a simulation). |
+| DB privilege split (1B) | ✅ | `safepay_app` / `safepay_system` / `safepay_admin`, each with only its own function; separate `admin-api` and `worker` services. |
+| Deals (2) | ✅ | Create, invite (link, optional email restriction), join, edit/cancel draft, submit/accept/decline, history, details, physical/digital/service, face-to-face/courier/digital, no self-deals, terms frozen once both accept. |
+| Simulated escrow (3) | ✅ | Fund, deliver, confirm/release, seller refund, worker auto-release and expiry; double-entry, atomic, row locks, idempotency, no negative balances. |
+| Disputes (4) | ✅ | Open with reason, statements, PNG/JPEG/PDF evidence (private, append-only), admin notes, admin decision (release/refund), timeline, audit. |
+| Mongolian mobile UI (5) | ✅ | Landing, register, login, verify, reset, dashboard, create/edit deal, deal details, history, invite, notifications, profile, security, dispute, admin (disputes, users, audit), dev mailbox. |
+| Tests | ✅ | pytest (unit + PostgreSQL integration incl. HTTP), Vitest, Playwright E2E. |
 
-* Opening a dispute with evidence (text and images), an admin console, release or refund
-  resolutions, and a full audit timeline per deal.
-* Expiry and auto-release jobs (scheduler) and notifications (SMS and e-mail
-  simulated).
-* A reconciliation job and admin ledger views.
+## Before a private beta (not started)
 
-## Phase 3: Hardening and VPS beta
-
-* Reverse proxy with TLS, separate DB roles, backups, monitoring and alerting,
-  CSP, a security review, load testing, and a privacy policy and terms in Mongolian.
+* Real transactional email; admin MFA; reverse proxy that sets `X-Forwarded-For`;
+  CSP + HSTS; backups; monitoring of the worker; audit hash chain + reconciliation job;
+  privacy policy and terms in Mongolian; retention policy; load testing; external
+  security review.
 
 Real payment integration is **out of scope** for the entire beta.

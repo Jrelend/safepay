@@ -18,8 +18,15 @@ disputes.
 ## Quick start (Docker)
 
 ```bash
-cp .env.example .env          # set POSTGRES_PASSWORD
-docker compose up --build     # web: http://localhost:3000  api: http://localhost:8000
+cp .env.example .env          # change every *_PASSWORD for anything but local use
+docker compose up --build     # web: http://localhost:3000
+# services: db, migrate, api (safepay_app), admin-api (safepay_admin, internal only),
+#           worker (safepay_system), web (serves the UI and the /api proxy)
+# Local only: with DEV_MAILBOX_ENABLED=true, verification/reset links appear at
+#   http://localhost:3000/dev/mailbox
+# Make someone an admin (owner credential, audited):
+docker compose run --rm -e MIGRATION_DATABASE_URL=postgresql+psycopg://safepay_migrator:<pw>@db:5432/safepay \
+  migrate python -m app.cli grant-admin you@example.com
 # hot reload:
 docker compose -f compose.yaml -f compose.dev.yaml up --build
 ```
@@ -29,7 +36,8 @@ docker compose -f compose.yaml -f compose.dev.yaml up --build
 ```bash
 # API (needs PostgreSQL 17). Create the roles once, as a superuser:
 psql -U postgres -d safepay -v dbname=safepay \
-     -v migrator_password=... -v app_password=... -f infra/postgres/bootstrap-roles.sql
+     -v migrator_password=... -v app_password=... -v system_password=... -v admin_password=... \
+     -f infra/postgres/bootstrap-roles.sql
 cd apps/api
 uv sync
 uv run alembic upgrade head        # uses MIGRATION_DATABASE_URL (safepay_migrator)
@@ -42,12 +50,24 @@ cd apps/web
 npm ci
 npm run dev                        # http://localhost:3000
 npm run lint && npm run typecheck && npm test && npm run build
+
+# Browser E2E (Playwright) against a disposable stack (PG superuser via PG* env vars)
+PGHOST=localhost PGUSER=postgres PGPASSWORD=... ./scripts/e2e-stack.sh
+cd apps/web && PGHOST=localhost PGUSER=postgres PGPASSWORD=... \
+  MIGRATION_DATABASE_URL=postgresql+psycopg://safepay_migrator:e2e-migrator-password@localhost:5432/safepay_e2e \
+  npx playwright test             # E2E_SCREENSHOT_DIR=... saves screenshots
 ```
 
 ## Endpoints
 
-* `GET /health`: liveness (no DB access)
-* `GET /ready`: DB reachable and schema at the latest migration; otherwise 503
+* `GET /health`, `GET /ready`: liveness / readiness (not exposed through the web proxy)
+* `/auth/*`, `/me/*`: registration, verification, login/logout, password reset/change, sessions, profile, notifications, simulated wallet
+* `/deals*`, `/invites/*`: deals, invitations, actions (`Idempotency-Key` required), timeline, escrow postings
+* `/disputes/*`: dispute details, statements, evidence files
+* `/admin/*` (admin API only): overview, disputes, notes, decisions, users, audit
+
+All state-changing requests need the session cookie, a matching `X-CSRF-Token` and an
+allowed `Origin`.
 
 ## Documentation
 
@@ -55,4 +75,5 @@ npm run lint && npm run typecheck && npm test && npm run build
 * [Transaction states](docs/transaction-states.md)
 * [Security requirements and database security model](docs/SECURITY.md)
 * [Development phases](docs/PHASES.md)
+* [Beta v0.1 plan and continuation log](docs/BETA_PLAN.md)
 * [Phase 1A security review](docs/security-review-phase-1a.md)
