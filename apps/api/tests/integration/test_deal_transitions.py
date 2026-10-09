@@ -23,6 +23,8 @@ from app.models import (
 )
 from app.services.deal_transitions import (
     DealNotFoundError,
+    DealTransitionError,
+    NotAdministratorError,
     ParticipantMismatchError,
     StaleDealVersionError,
     TransitionNotAllowedError,
@@ -34,6 +36,7 @@ from tests.integration.scenario import (
     act,
     advance_to_awaiting_payment,
     advance_to_funded,
+    backdate,
     new_deal,
 )
 
@@ -143,23 +146,27 @@ def test_seller_cannot_fund(app_engine: Engine) -> None:
         act(app_engine, sc, DealAction.FUND, Actor.SELLER)
 
 
-def test_actor_must_be_that_participant(app_engine: Engine) -> None:
+def test_actor_role_is_derived_not_claimed(app_engine: Engine) -> None:
+    """The public path has no actor parameter: the seller cannot fund as 'buyer'."""
     sc = new_deal(app_engine)
     advance_to_awaiting_payment(app_engine, sc)
-    # Claiming to be the BUYER while being the seller.
-    with pytest.raises(ParticipantMismatchError):
+    with pytest.raises(TransitionNotAllowedError, match="SELLER may not FUND"):
         act(app_engine, sc, DealAction.FUND, Actor.BUYER, user_id=sc.seller_id)
-    # A stranger.
+    # A stranger is not a participant at all.
     with pytest.raises(ParticipantMismatchError):
         act(app_engine, sc, DealAction.FUND, Actor.BUYER, user_id=uuid.uuid4())
     assert _status(app_engine, sc.deal_id) is DealStatus.AWAITING_PAYMENT
 
 
-def test_system_actor_has_no_user(app_engine: Engine) -> None:
+def test_public_path_cannot_perform_system_actions(app_engine: Engine) -> None:
     sc = new_deal(app_engine)
     act(app_engine, sc, DealAction.SUBMIT, Actor.SELLER)
-    with pytest.raises(ParticipantMismatchError):
-        act(app_engine, sc, DealAction.EXPIRE, Actor.SYSTEM, user_id=sc.buyer_id)
+    backdate(sc.deal_id, 30)
+    for user in (sc.buyer_id, sc.seller_id):
+        with pytest.raises(TransitionNotAllowedError):
+            act(app_engine, sc, DealAction.EXPIRE, Actor.BUYER, user_id=user)
+    # The worker role can (eligibility re-checked in SQL).
+    assert act(app_engine, sc, DealAction.EXPIRE, Actor.SYSTEM).to_status is DealStatus.EXPIRED
 
 
 def test_unknown_deal(app_engine: Engine) -> None:
@@ -180,7 +187,7 @@ def test_cannot_leave_terminal_state(app_engine: Engine) -> None:
     act(app_engine, sc, DealAction.CANCEL, Actor.BUYER)
     for action in DealAction:
         for actor in Actor:
-            with pytest.raises((TransitionNotAllowedError, ParticipantMismatchError)):
+            with pytest.raises(DealTransitionError):
                 act(app_engine, sc, action, actor)
     assert _status(app_engine, sc.deal_id) is DealStatus.CANCELLED
 
@@ -210,7 +217,6 @@ def test_no_double_funding_concurrent(app_engine: Engine) -> None:
                 s,
                 deal_id=sc.deal_id,
                 action=DealAction.FUND,
-                actor=Actor.BUYER,
                 actor_user_id=sc.buyer_id,
                 idempotency_key="race-a",
             )
@@ -300,7 +306,6 @@ def test_failure_after_transition_rolls_everything_back(app_engine: Engine) -> N
             s,
             deal_id=sc.deal_id,
             action=DealAction.FUND,
-            actor=Actor.BUYER,
             actor_user_id=sc.buyer_id,
             idempotency_key="rollback-key",
         )
@@ -318,7 +323,7 @@ def test_failure_after_transition_rolls_everything_back(app_engine: Engine) -> N
             )
             == 0
         )
-        scope = idempotency_scope(Actor.BUYER, sc.buyer_id)
+        scope = idempotency_scope(sc.buyer_id)
         assert s.get(IdempotencyRecord, (scope, "rollback-key")) is None
     # The same key can be retried after the rollback and now succeeds.
     assert act(app_engine, sc, DealAction.FUND, Actor.BUYER, key="rollback-key").replayed is False
@@ -332,7 +337,6 @@ def test_database_error_aborts_the_whole_transaction(app_engine: Engine) -> None
             s,
             deal_id=sc.deal_id,
             action=DealAction.SUBMIT,
-            actor=Actor.SELLER,
             actor_user_id=sc.seller_id,
             idempotency_key=f"k-{uuid.uuid4()}",
         )
@@ -340,7 +344,6 @@ def test_database_error_aborts_the_whole_transaction(app_engine: Engine) -> None
             s,
             deal_id=sc.deal_id,
             action=DealAction.FUND,
-            actor=Actor.BUYER,
             actor_user_id=sc.buyer_id,
             idempotency_key=f"k-{uuid.uuid4()}",
         )
@@ -369,9 +372,11 @@ def test_entries_direction_enum_roundtrip() -> None:
     assert AccountType.LIABILITY.value == "LIABILITY"
 
 
-def test_admin_must_be_an_existing_active_user(app_engine: Engine) -> None:
+def test_admin_actions_require_an_administrator(app_engine: Engine) -> None:
     sc = new_deal(app_engine)
     advance_to_funded(app_engine, sc)
-    with pytest.raises(ParticipantMismatchError, match="active user"):
-        act(app_engine, sc, DealAction.REFUND, Actor.ADMIN, user_id=uuid.uuid4())
+    # The buyer is not an admin; neither is a random id.
+    for who in (sc.buyer_id, uuid.uuid4()):
+        with pytest.raises(NotAdministratorError):
+            act(app_engine, sc, DealAction.REFUND, Actor.ADMIN, user_id=who)
     assert _status(app_engine, sc.deal_id) is DealStatus.FUNDED

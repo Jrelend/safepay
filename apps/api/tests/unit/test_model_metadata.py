@@ -14,6 +14,14 @@ EXPECTED_TABLES = {
     "audit_events",
     "deal_transitions",
     "idempotency_records",
+    "admins",
+    "sessions",
+    "auth_tokens",
+    "email_outbox",
+    "rate_limits",
+    "disputes",
+    "dispute_evidence",
+    "notifications",
 }
 
 

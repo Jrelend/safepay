@@ -11,6 +11,11 @@ services:
       - ./apps/api/app:/app/app:ro
       - ./apps/api/migrations:/app/migrations:ro
 
+  admin-api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./apps/api/app:/app/app:ro
+
   web:
     build:
       context: ./apps/web
@@ -20,6 +25,7 @@ services:
     command: ["npx", "next", "dev", "--hostname", "0.0.0.0"]
     environment:
       API_INTERNAL_URL: http://api:8000
+      ADMIN_API_INTERNAL_URL: http://admin-api:8000
       WATCHPACK_POLLING: "true"
     volumes:
       - ./apps/web:/app

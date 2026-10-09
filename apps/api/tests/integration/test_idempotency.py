@@ -103,7 +103,6 @@ def _race(
                 s,
                 deal_id=sc.deal_id,
                 action=DealAction.FUND,
-                actor=Actor.BUYER,
                 actor_user_id=sc.buyer_id,
                 idempotency_key=key,
             )
@@ -118,7 +117,6 @@ def _race(
                     s,
                     deal_id=sc.deal_id,
                     action=DealAction.FUND,
-                    actor=Actor.BUYER,
                     actor_user_id=sc.buyer_id,
                     idempotency_key=key,
                     expected_version=second_expected_version,

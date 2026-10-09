@@ -18,7 +18,12 @@ def test_deal_amount_must_be_positive(session: Session, amount: int) -> None:
 def test_deal_currency_is_mnt_only(session: Session) -> None:
     user = make_user(session)
     deal = Deal(
-        reference="SP-USD00001", title="x", amount_mnt=1, currency="USD", created_by_id=user.id
+        reference="SP-USD00001",
+        title="xyz",
+        amount_mnt=1,
+        currency="USD",
+        created_by_id=user.id,
+        invite_token_hash="a" * 64,
     )
     session.add(deal)
     with pytest.raises(IntegrityError, match="currency_mnt"):

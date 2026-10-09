@@ -58,7 +58,7 @@ def _scalar(engine: Engine, sql: str) -> object:
 
 def test_new_database_initializes_with_correct_ownership(fresh_db: Engine) -> None:
     command.upgrade(_alembic(), "head")
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0002"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0003"
     assert (
         _scalar(
             fresh_db,
@@ -118,18 +118,44 @@ def test_downgrade_refuses_to_destroy_data(fresh_db: Engine) -> None:
     with fresh_db.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO users (phone_e164, display_name, status) "
-                "VALUES ('+97699000001', 'keep me', 'ACTIVE')"
+                "INSERT INTO users (email, password_hash, display_name, status) "
+                "VALUES ('keep@example.com', '!x', 'keep me', 'ACTIVE')"
             )
         )
-    command.downgrade(_alembic(), "0001")  # 0002 owns no user data: allowed
     with pytest.raises(Exception, match="refusing to downgrade"):
         command.downgrade(_alembic(), "base")
     assert _scalar(fresh_db, "SELECT count(*) FROM users") == 1
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0001"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0003"
     # Explicit, deliberate opt-in still works (after a backup).
     command.downgrade(_alembic("allow_data_loss=true"), "base")
     assert _scalar(fresh_db, "SELECT to_regclass('public.users') IS NULL") is True
+
+
+def test_0003_upgrade_keeps_existing_rows(fresh_db: Engine) -> None:
+    """Upgrading a populated 0002 database backfills instead of dropping data."""
+    command.upgrade(_alembic(), "0002")
+    with fresh_db.begin() as conn:
+        user_id = conn.execute(
+            text(
+                "INSERT INTO users (phone_e164, display_name, status) "
+                "VALUES ('+97688000001', 'legacy', 'ACTIVE') "
+                "RETURNING id"
+            )
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO deals "
+                "(reference, title, description, amount_mnt, status, created_by_id) "
+                "VALUES ('SP-LEGACY01', 'legacy deal', '', 5000, 'DRAFT', :u)"
+            ),
+            {"u": user_id},
+        )
+    command.upgrade(_alembic(), "head")
+    assert _scalar(fresh_db, "SELECT count(*) FROM users WHERE email LIKE 'legacy+%'") == 1
+    assert (
+        _scalar(fresh_db, "SELECT count(*) FROM deals WHERE invite_token_hash ~ '^[0-9a-f]{64}$'")
+        == 1
+    )
 
 
 def test_downgrade_of_0002_refuses_when_idempotency_records_exist(fresh_db: Engine) -> None:

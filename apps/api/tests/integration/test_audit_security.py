@@ -2,14 +2,16 @@
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Engine, select, text
+import pytest
+from sqlalchemy import Engine, select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.db.transactions import atomic
-from app.domain.deal_states import Actor
+from app.domain.deal_states import Actor, DealAction
 from app.models import AuditEvent, DealParticipant
 from tests.integration.conftest import make_deal, make_user
-from tests.integration.scenario import new_deal
+from tests.integration.scenario import act, new_deal
 
 FORGED = datetime(2000, 1, 1, tzinfo=UTC)
 
@@ -50,19 +52,21 @@ def test_raw_sql_audit_timestamp_is_overwritten(app_engine: Engine) -> None:
     assert stored.year == datetime.now(UTC).year
 
 
-def test_participant_acceptance_time_is_server_generated(app_engine: Engine) -> None:
+def test_participant_acceptance_is_recorded_by_the_database(app_engine: Engine) -> None:
     sc = new_deal(app_engine)
-    with Session(app_engine) as s, atomic(s):
-        participant = s.scalars(
-            select(DealParticipant).where(
-                DealParticipant.deal_id == sc.deal_id, DealParticipant.user_id == sc.buyer_id
-            )
-        ).one()
-        participant.accepted_at = FORGED
+    # The app role can no longer mark acceptance directly...
+    with Session(app_engine) as s, pytest.raises(DBAPIError, match="permission denied"):
+        s.execute(
+            update(DealParticipant)
+            .where(DealParticipant.deal_id == sc.deal_id)
+            .values(accepted_at=FORGED)
+        )
+    # ...it is set (to server time) only by SUBMIT / ACCEPT.
+    act(app_engine, sc, DealAction.SUBMIT, Actor.SELLER)
     with Session(app_engine) as s:
         accepted = s.scalars(
             select(DealParticipant.accepted_at).where(
-                DealParticipant.deal_id == sc.deal_id, DealParticipant.user_id == sc.buyer_id
+                DealParticipant.deal_id == sc.deal_id, DealParticipant.user_id == sc.seller_id
             )
         ).one()
     assert accepted is not None

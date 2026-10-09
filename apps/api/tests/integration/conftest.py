@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,6 @@ from sqlalchemy import URL, Engine, create_engine, make_url, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.db.session import get_engine, get_sessionmaker
 from app.domain.ledger import AccountPurpose, AccountType
 from app.models import Deal, DealParticipant, LedgerAccount, ParticipantRole, User
 
@@ -41,6 +41,8 @@ REPO_ROOT = API_ROOT.parents[1]
 BOOTSTRAP_SQL = REPO_ROOT / "infra" / "postgres" / "bootstrap-roles.sql"
 MIGRATOR_PASSWORD = os.environ.get("TEST_MIGRATOR_PASSWORD", "test-migrator-password")
 APP_PASSWORD = os.environ.get("TEST_APP_PASSWORD", "test-app-password")
+SYSTEM_PASSWORD = os.environ.get("TEST_SYSTEM_PASSWORD", "test-system-password")
+ADMIN_ROLE_PASSWORD = os.environ.get("TEST_ADMIN_PASSWORD", "test-admin-password")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -94,6 +96,10 @@ def bootstrap_roles(url: URL) -> None:
             f"migrator_password={MIGRATOR_PASSWORD}",
             "-v",
             f"app_password={APP_PASSWORD}",
+            "-v",
+            f"system_password={SYSTEM_PASSWORD}",
+            "-v",
+            f"admin_password={ADMIN_ROLE_PASSWORD}",
             "-f",
             str(BOOTSTRAP_SQL),
         ],
@@ -116,8 +122,6 @@ def admin_engine(admin_url: URL) -> Iterator[Engine]:
     os.environ["MIGRATION_DATABASE_URL"] = migrator_url.render_as_string(hide_password=False)
     os.environ["DATABASE_URL"] = app_url.render_as_string(hide_password=False)
     get_settings.cache_clear()
-    get_engine.cache_clear()
-    get_sessionmaker.cache_clear()
     command.upgrade(Config(str(API_ROOT / "alembic.ini")), "head")
     yield eng
     eng.dispose()
@@ -139,6 +143,55 @@ def app_engine(admin_engine: Engine, admin_url: URL) -> Iterator[Engine]:
     eng.dispose()
 
 
+@pytest.fixture(scope="session")
+def system_engine(admin_engine: Engine, admin_url: URL) -> Iterator[Engine]:
+    """The worker role (safepay_system)."""
+    eng = create_engine(_role_url(admin_url, "safepay_system", SYSTEM_PASSWORD))
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture(scope="session")
+def admin_api_engine(admin_engine: Engine, admin_url: URL) -> Iterator[Engine]:
+    """The admin API role (safepay_admin). (``admin_engine`` is the superuser.)"""
+    eng = create_engine(_role_url(admin_url, "safepay_admin", ADMIN_ROLE_PASSWORD))
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _role_engines(request: pytest.FixtureRequest) -> None:
+    """Expose role engines to tests.integration.scenario (only when a DB is configured)."""
+    if not os.environ.get("TEST_DATABASE_URL"):
+        return
+    from tests.integration import scenario  # noqa: PLC0415
+
+    scenario.ENGINES.update(
+        owner=request.getfixturevalue("engine"),
+        app=request.getfixturevalue("app_engine"),
+        system=request.getfixturevalue("system_engine"),
+        admin=request.getfixturevalue("admin_api_engine"),
+        superuser=request.getfixturevalue("admin_engine"),
+    )
+
+
+@pytest.fixture(scope="session")
+def app_url(admin_url: URL) -> URL:
+    return _role_url(admin_url, "safepay_app", APP_PASSWORD)
+
+
+@pytest.fixture(scope="session")
+def admin_role_url(admin_url: URL) -> URL:
+    return _role_url(admin_url, "safepay_admin", ADMIN_ROLE_PASSWORD)
+
+
+@pytest.fixture
+def fresh_rate_limits(engine: Engine) -> None:
+    """HTTP tests share one client IP; start each with empty rate-limit windows."""
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM rate_limits"))
+
+
 @pytest.fixture
 def session(engine: Engine) -> Iterator[Session]:
     with Session(engine, expire_on_commit=False) as s:
@@ -155,8 +208,14 @@ def _code() -> str:
     return uuid.uuid4().hex[:12].upper()
 
 
-def make_user(session: Session) -> User:
-    user = User(phone_e164=f"+976{uuid.uuid4().int % 10**8:08d}", display_name="Тест хэрэглэгч")
+def make_user(session: Session, *, verified: bool = True) -> User:
+    user = User(
+        email=f"user-{uuid.uuid4().hex[:12]}@example.com",
+        password_hash="!not-a-real-hash",
+        email_verified_at=datetime.now(UTC) if verified else None,
+        phone_e164=f"+976{uuid.uuid4().int % 10**8:08d}",
+        display_name="Тест хэрэглэгч",
+    )
     session.add(user)
     session.flush()
     return user
@@ -168,6 +227,7 @@ def make_deal(session: Session, creator: User, amount_mnt: int = 150_000) -> Dea
         title="Хуучин утас",
         amount_mnt=amount_mnt,
         created_by_id=creator.id,
+        invite_token_hash=uuid.uuid4().hex + uuid.uuid4().hex,
     )
     session.add(deal)
     session.flush()

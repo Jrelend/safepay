@@ -1,17 +1,21 @@
-"""Database engine and session management (SQLAlchemy 2, synchronous psycopg 3)."""
+"""Database engines and sessions (SQLAlchemy 2, synchronous psycopg 3).
+
+Each FastAPI app instance owns exactly ONE engine, bound to one database role
+(``safepay_app`` for the public API, ``safepay_admin`` for the admin API) and
+stored on ``app.state``. Nothing in the request path uses a process-global
+engine, so a process can never accidentally use another role's credentials.
+"""
 
 from collections.abc import Iterator
-from functools import lru_cache
 
+from fastapi import Request
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.config import get_settings
+from app.core.config import Settings
 
 
-@lru_cache
-def get_engine() -> Engine:
-    settings = get_settings()
+def make_engine(settings: Settings) -> Engine:
     return create_engine(
         str(settings.database_url),
         pool_size=settings.db_pool_size,
@@ -21,14 +25,19 @@ def get_engine() -> Engine:
     )
 
 
-@lru_cache
-def get_sessionmaker() -> sessionmaker[Session]:
-    return sessionmaker(bind=get_engine(), autoflush=False, expire_on_commit=False)
+def get_engine(request: Request) -> Engine:
+    engine: Engine = request.app.state.engine
+    return engine
 
 
-def get_db() -> Iterator[Session]:
+def get_sessionmaker(request: Request) -> sessionmaker[Session]:
+    factory: sessionmaker[Session] = request.app.state.sessionmaker
+    return factory
+
+
+def get_db(request: Request) -> Iterator[Session]:
     """FastAPI dependency yielding a session; callers own commit boundaries."""
-    session = get_sessionmaker()()
+    session = get_sessionmaker(request)()
     try:
         yield session
     finally:

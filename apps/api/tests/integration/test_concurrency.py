@@ -3,14 +3,14 @@
 import uuid
 
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.domain.deal_states import DealStatus
 from app.domain.ledger import AccountPurpose, AccountType, EntryDirection
-from app.models import Deal, LedgerEntry, LedgerTransaction
+from app.models import Deal, LedgerAccount, LedgerEntry, LedgerTransaction
 from tests.integration.conftest import make_account, make_deal, make_user
 
 
@@ -38,7 +38,9 @@ def test_concurrent_postings_with_same_idempotency_key_post_once(engine: Engine)
     with Session(engine) as setup:
         user = make_user(setup)
         deal = make_deal(setup, user)
-        wallet = make_account(setup, AccountPurpose.USER_WALLET, AccountType.LIABILITY, owner=user)
+        wallet = setup.scalars(
+            select(LedgerAccount).where(LedgerAccount.purpose == AccountPurpose.SIMULATED_CASH)
+        ).one()
         escrow = make_account(setup, AccountPurpose.DEAL_ESCROW, AccountType.LIABILITY, deal=deal)
         setup.commit()
         deal_id, amount = deal.id, deal.amount_mnt
