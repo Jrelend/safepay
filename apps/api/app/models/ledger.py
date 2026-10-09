@@ -21,9 +21,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.ledger import AccountPurpose, AccountType, EntryDirection
+from app.domain.ledger import AccountPurpose, AccountType, EntryDirection, LedgerTransactionKind
 from app.domain.money import CURRENCY
 from app.models.base import Base, CreatedAtMixin, UUIDPrimaryKeyMixin, str_enum
+
+_ESCROW_KINDS_SQL = ", ".join(f"'{k.value}'" for k in LedgerTransactionKind)
 
 
 class LedgerAccount(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -78,7 +80,28 @@ class LedgerTransaction(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """A journal transaction grouping balanced entries. Immutable."""
 
     __tablename__ = "ledger_transactions"
-    __table_args__ = (CheckConstraint("reverses_transaction_id <> id", name="not_self_reversing"),)
+    __table_args__ = (
+        CheckConstraint("reverses_transaction_id <> id", name="not_self_reversing"),
+        CheckConstraint(
+            f"kind NOT IN ({_ESCROW_KINDS_SQL}) OR deal_id IS NOT NULL",
+            name="escrow_kind_has_deal",
+        ),
+        # No double funding / release / refund: each escrow kind at most once per deal...
+        Index(
+            "uq_ledger_transactions_deal_escrow_kind",
+            "deal_id",
+            "kind",
+            unique=True,
+            postgresql_where=text(f"kind IN ({_ESCROW_KINDS_SQL})"),
+        ),
+        # ...and a deal is settled (released OR refunded) at most once.
+        Index(
+            "uq_ledger_transactions_deal_settlement",
+            "deal_id",
+            unique=True,
+            postgresql_where=text("kind IN ('ESCROW_RELEASE', 'ESCROW_REFUND')"),
+        ),
+    )
 
     # Client- or server-supplied key; replaying the same request must not post twice.
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True)

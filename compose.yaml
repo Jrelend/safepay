@@ -5,11 +5,17 @@
 #
 # Only the web and api ports are published, and only on BIND_ADDRESS
 # (127.0.0.1 by default). On a VPS put a TLS-terminating reverse proxy in front.
+#
+# Database roles (created on a fresh volume by infra/postgres/initdb):
+#   POSTGRES_USER     superuser, bootstrap only; nothing in this stack uses it.
+#   safepay_migrator  owns the schema; used only by the one-shot `migrate` job.
+#   safepay_app       least-privileged runtime role used by `api`.
+# The init script runs ONLY on an empty volume. After upgrading from Phase 0,
+# recreate the volume (`docker compose down -v`); see docs/SECURITY.md.
 name: safepay
 
-x-api-env: &api-env
+x-api-common: &api-common
   APP_ENV: ${APP_ENV:-local}
-  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-safepay}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-safepay}
   CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-["http://localhost:3000"]}
   PAYMENTS_SIMULATION_ONLY: "true"
 
@@ -18,13 +24,19 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-safepay}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-safepay}
+      SAFEPAY_MIGRATOR_PASSWORD: ${SAFEPAY_MIGRATOR_PASSWORD:?set SAFEPAY_MIGRATOR_PASSWORD in .env}
+      SAFEPAY_APP_PASSWORD: ${SAFEPAY_APP_PASSWORD:?set SAFEPAY_APP_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ./infra/postgres/bootstrap-roles.sql:/safepay/bootstrap-roles.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      # TCP on purpose: during first-run initialisation (role bootstrap) the
+      # server listens only on its Unix socket, so this stays unhealthy until done.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -34,7 +46,9 @@ services:
     build: ./apps/api
     image: safepay-api:local
     command: ["alembic", "upgrade", "head"]
-    environment: *api-env
+    environment:
+      <<: *api-common
+      MIGRATION_DATABASE_URL: postgresql+psycopg://safepay_migrator:${SAFEPAY_MIGRATOR_PASSWORD:?set SAFEPAY_MIGRATOR_PASSWORD in .env}@db:5432/${POSTGRES_DB:-safepay}
     depends_on:
       db:
         condition: service_healthy
@@ -44,7 +58,9 @@ services:
   api:
     image: safepay-api:local
     restart: unless-stopped
-    environment: *api-env
+    environment:
+      <<: *api-common
+      DATABASE_URL: postgresql+psycopg://safepay_app:${SAFEPAY_APP_PASSWORD:?set SAFEPAY_APP_PASSWORD in .env}@db:5432/${POSTGRES_DB:-safepay}
     depends_on:
       migrate:
         condition: service_completed_successfully

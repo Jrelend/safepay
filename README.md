@@ -27,13 +27,15 @@ docker compose -f compose.yaml -f compose.dev.yaml up --build
 ## Without Docker
 
 ```bash
-# API (needs a PostgreSQL 17 database; see DATABASE_URL in .env.example)
+# API (needs PostgreSQL 17). Create the roles once, as a superuser:
+psql -U postgres -d safepay -v dbname=safepay \
+     -v migrator_password=... -v app_password=... -f infra/postgres/bootstrap-roles.sql
 cd apps/api
 uv sync
-uv run alembic upgrade head
+uv run alembic upgrade head        # uses MIGRATION_DATABASE_URL (safepay_migrator)
 uv run uvicorn app.main:app --reload
 uv run ruff check . && uv run ruff format --check . && uv run mypy
-uv run pytest                      # integration tests are skipped unless TEST_DATABASE_URL is set
+uv run pytest                      # integration tests need TEST_DATABASE_URL (superuser, *_test DB)
 
 # Web
 cd apps/web
@@ -49,7 +51,7 @@ npm run lint && npm run typecheck && npm test && npm run build
 
 ## Documentation
 
-* [Architecture](docs/architecture.md)
+* [Architecture](docs/ARCHITECTURE.md)
 * [Transaction states](docs/transaction-states.md)
-* [Security requirements](docs/security.md)
-* [Development phases](docs/development-phases.md)
+* [Security requirements and database security model](docs/SECURITY.md)
+* [Development phases](docs/PHASES.md)

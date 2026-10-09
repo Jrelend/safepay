@@ -12,6 +12,8 @@ EXPECTED_TABLES = {
     "ledger_transactions",
     "ledger_entries",
     "audit_events",
+    "deal_transitions",
+    "idempotency_records",
 }
 
 

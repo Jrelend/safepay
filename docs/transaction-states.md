@@ -1,9 +1,17 @@
 # Deal (escrow transaction) states
 
-Source of truth: `apps/api/app/domain/deal_states.py`. Only the backend may
-change a deal's state; clients request *actions*. Each transition lists which
-actor may perform it and which simulated ledger posting must be written in the
-**same** database transaction.
+Source of truth: `apps/api/app/domain/deal_states.py`, mirrored in the
+`deal_transitions` database table (seeded by migration 0002; an integration test
+fails if the two differ). Only the backend may change a deal's state; clients
+request *actions*. Each transition lists which actor may perform it and which
+simulated ledger posting must be written in the **same** database transaction.
+
+**Enforcement (Phase 1A).** The application role has no UPDATE privilege on
+`deals.status`. Status changes happen only through the `safepay_transition_deal`
+database function. It locks the deal, checks this table and the acting
+participant, and posts the escrow ledger entries atomically. A trigger also rejects
+any status change that is not an edge in this table, for every role. See
+[SECURITY.md](SECURITY.md).
 
 | From | Action | To | Who | Ledger effect |
 |---|---|---|---|---|
