@@ -26,6 +26,7 @@ from app.services.deal_transitions import (
     ParticipantMismatchError,
     StaleDealVersionError,
     TransitionNotAllowedError,
+    idempotency_scope,
     transition_deal,
 )
 from tests.integration.scenario import (
@@ -317,7 +318,8 @@ def test_failure_after_transition_rolls_everything_back(app_engine: Engine) -> N
             )
             == 0
         )
-        assert s.get(IdempotencyRecord, ("deal.transition", "rollback-key")) is None
+        scope = idempotency_scope(Actor.BUYER, sc.buyer_id)
+        assert s.get(IdempotencyRecord, (scope, "rollback-key")) is None
     # The same key can be retried after the rollback and now succeeds.
     assert act(app_engine, sc, DealAction.FUND, Actor.BUYER, key="rollback-key").replayed is False
 

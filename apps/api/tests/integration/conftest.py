@@ -69,7 +69,7 @@ def _role_url(admin_url: URL, role: str, password: str) -> URL:
     return admin_url.set(username=role, password=password)
 
 
-def _bootstrap_roles(url: URL) -> None:
+def bootstrap_roles(url: URL) -> None:
     psql = shutil.which("psql")
     assert psql is not None
     env = {**os.environ, "PGPASSWORD": url.password or ""}
@@ -110,7 +110,7 @@ def admin_engine(admin_url: URL) -> Iterator[Engine]:
         # DROP SCHEMA bypasses the append-only triggers; only ever done on *_test DBs.
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
-    _bootstrap_roles(admin_url)
+    bootstrap_roles(admin_url)
     migrator_url = _role_url(admin_url, "safepay_migrator", MIGRATOR_PASSWORD)
     app_url = _role_url(admin_url, "safepay_app", APP_PASSWORD)
     os.environ["MIGRATION_DATABASE_URL"] = migrator_url.render_as_string(hide_password=False)

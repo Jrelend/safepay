@@ -55,3 +55,4 @@ npm run lint && npm run typecheck && npm test && npm run build
 * [Transaction states](docs/transaction-states.md)
 * [Security requirements and database security model](docs/SECURITY.md)
 * [Development phases](docs/PHASES.md)
+* [Phase 1A security review](docs/security-review-phase-1a.md)

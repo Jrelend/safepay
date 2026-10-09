@@ -27,7 +27,11 @@
 |---|---|---|
 | `POSTGRES_USER` (superuser) | Initialises a fresh volume only. Nothing at runtime uses it. | superuser |
 | `safepay_migrator` | Owns the `public` schema and **every** table, trigger and function. Used only by `alembic upgrade`. | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` |
-| `safepay_app` | The API's runtime role. | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`, `CONNECTION LIMIT 50`, `statement_timeout=15s`, `lock_timeout=5s`, `idle_in_transaction_session_timeout=30s` |
+| `safepay_app` | The API's runtime role. | `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`, `CONNECTION LIMIT 50`; default `statement_timeout=15s`, `lock_timeout=5s`, `idle_in_transaction_session_timeout=30s` |
+
+The timeouts are **defaults, not security controls**: any role may change its own
+user-settable parameters (`SET`, or `ALTER ROLE safepay_app SET …`). They protect
+against accidental long transactions, not against a holder of the app credential.
 
 The roles are created by [`infra/postgres/bootstrap-roles.sql`](../infra/postgres/bootstrap-roles.sql).
 It is idempotent and runs automatically on a fresh Compose volume through
@@ -36,7 +40,11 @@ It is idempotent and runs automatically on a fresh Compose volume through
 - makes the migrator the owner of the database and of the `public` schema;
 - removes `PUBLIC` access to the database and schema, so the app gets `CONNECT`
   and `USAGE` only, with no `CREATE` or `TEMPORARY`;
-- revokes `EXECUTE` on future functions from `PUBLIC` by default;
+- revokes `EXECUTE` on future functions from `PUBLIC` by default. This uses the
+  *global* form; migration 0002 repeats it, because a per-schema revoke of a
+  globally granted default is silently ignored by PostgreSQL;
+- revokes `PUBLIC` access to large-object creation (`lo_create`, `lo_creat`,
+  `lo_from_bytea`), which the app never needs;
 - revokes any role membership the app role might have.
 
 Three gates enforce the role split:
@@ -65,8 +73,12 @@ The only function the app may execute is `safepay_transition_deal(...)`.
 ### Money moves only through `safepay_transition_deal`
 
 This is a `SECURITY DEFINER` function owned by `safepay_migrator`, with
-`search_path` pinned to `pg_catalog, public, pg_temp`. In the caller's
-transaction it:
+`search_path` pinned to `pg_catalog, public, pg_temp`. **Every** other SafePay
+function, including the trigger functions, has the same pinned `search_path`.
+This matters for the deferred constraint triggers: they fire at `COMMIT` with the
+session's `search_path`, where `pg_temp` is searched first. The function contains
+no dynamic SQL, and every input is a typed parameter that is compared, never
+concatenated into SQL. In the caller's transaction it:
 
 1. **locks** the deal row (`SELECT … FOR UPDATE`), so concurrent transitions
    of one deal are serialized;
@@ -74,7 +86,8 @@ transaction it:
 3. looks up `(status, action)` in `deal_transitions` and checks the actor
    is allowed (error `SPD03`);
 4. checks that a BUYER or SELLER actor **is that participant** of the deal, that SYSTEM
-   has no user, and that ADMIN names an active user (error `SPD04`);
+   has no user, and that ADMIN names an active user (error `SPD04`). A deal cannot
+   leave DRAFT, except by being cancelled, until it has both a buyer and a seller;
 5. posts the escrow ledger transaction, if the transition requires one. It
    checks the escrow balance first: empty before a hold, exactly the deal
    amount before a release or refund (error `SPD05`). It uses a
@@ -158,6 +171,35 @@ with atomic(session):            # exactly one DB transaction; refuses nesting
 
 `lock_for_update(session, Model, id)` is available for future row-locked operations.
 
+## Trust boundary: who is the acting user?
+
+```
+ client ──(no route exists in Phase 1A)──▶ API process ──safepay_app──▶ safepay_transition_deal
+                                            │ supplies actor + actor_user_id   │ verifies: participant,
+                                            │ (must come from an authenticated │ legal transition, ADMIN
+                                            │  session in Phase 1B)            │ is an ACTIVE user
+```
+
+* The database verifies **participation and state**, not **identity**. Whoever holds
+  the `safepay_app` credential can act as any buyer or seller of any deal, as
+  SYSTEM (for example `AUTO_RELEASE`, which pays the seller), or as ADMIN with any
+  active user id. The API process and its credential are therefore inside the
+  trust boundary.
+* **Phase 1A exposes no such route.** The only HTTP routes are `GET /health`,
+  `GET /ready` and the docs. `tests/unit/test_exposed_surface.py` fails if any other
+  route is added, or if the HTTP layer imports `app.services`.
+* **Before any money-moving endpoint is exposed (Phase 1B), all of these are required:**
+  1. Authentication. `actor_user_id` must come from the server-side session, never
+     from the request body.
+  2. The API derives `actor` (BUYER/SELLER) from the deal participants. It never
+     accepts it from the client.
+  3. SYSTEM transitions only from a scheduler. Ideally that runs as a separate
+     database role allowed to call a SYSTEM-only function, so the web-facing API
+     cannot `AUTO_RELEASE`.
+  4. ADMIN transitions only for users in an admin registry, behind separate
+     authorization, ideally also via a separate role or function.
+  5. An `Idempotency-Key` header (scoped per user, see below), and rate limiting.
+
 ## Idempotency
 
 `app/services/idempotency.run_idempotent(session, scope, key, request, operation)`:
@@ -172,6 +214,15 @@ with atomic(session):            # exactly one DB transaction; refuses nesting
    `IdempotencyKeyReusedError`, to be mapped to HTTP 409 later.
 5. **Failed attempts are not stored**: the rollback removes the claim, so the
    client can retry with the same key.
+
+6. **Claims must be completed.** A deferred constraint trigger rejects any
+   transaction that commits a claim without a response, so a key can never be left
+   permanently blocked.
+
+**Scope.** Deal transitions use the scope `deal.transition:<acting user id>`, or
+`deal.transition:SYSTEM`. One principal's key can never collide with, block, or
+reveal the existence of another principal's key. The request fingerprint covers
+the deal, action, actor, user and expected version.
 
 Keys are 1–128 characters from `[A-Za-z0-9._:-]`. Records never expire yet; a
 cleanup job must run as the migrator (the app cannot delete records).
@@ -191,6 +242,18 @@ docker compose up --build   # initdb creates the roles; migrate runs 0001 + 0002
 To keep data instead, run the bootstrap script as a superuser, then
 `REASSIGN OWNED BY <old_owner> TO safepay_migrator;`, and then `alembic upgrade head`
 as `safepay_migrator`.
+
+## Migration safety
+
+* Migrations run only as `safepay_migrator`, never as a superuser; `migrations/env.py`
+  refuses any other role before the first revision. No migration needs superuser
+  privileges. Only the one-time role bootstrap does, and the API never does.
+* Each revision runs in its own transaction (PostgreSQL DDL is transactional). A
+  revision that fails part-way leaves **nothing** behind: no tables, functions,
+  grants or `alembic_version` change. A test proves this by sabotaging 0002.
+* **Downgrades never silently destroy data.** `DROP TABLE` bypasses the append-only
+  triggers, so every destructive downgrade refuses to run while the affected tables
+  hold rows. To override, take a backup and pass `-x allow_data_loss=true` explicitly.
 
 ## Other controls implemented
 
@@ -223,6 +286,13 @@ as `safepay_migrator`.
 * **Participant and draft writes are not authorized per user yet.** The app role can
   add participants to any DRAFT or PENDING_ACCEPTANCE deal and edit DRAFT terms; the
   database limits *what* can change, but *who* may do it needs Phase 1B auth.
+* **Holder of the `safepay_app` credential** can impersonate any participant,
+  SYSTEM or ADMIN through `safepay_transition_deal` (see "Trust boundary"). Protect the
+  credential like a payment key. Splitting SYSTEM and ADMIN into separate roles is
+  recommended for Phase 1B.
+* **Availability:** the app role can hold row locks on deals and claims, and can
+  raise its own timeouts. A leaked credential could therefore cause lock contention,
+  but not financial changes.
 * **Lock waits:** `lock_timeout=5s` for the app role means a request that waits
   behind a long-running transition on the same deal or idempotency key fails
   instead of hanging; clients should retry with the same key.

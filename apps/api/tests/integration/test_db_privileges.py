@@ -145,6 +145,31 @@ ESCALATION = {
     "read_server_file": "SELECT pg_read_file('/etc/passwd')",
     "call_trigger_function": "SELECT safepay_forbid_mutation()",
     "create_schema": "CREATE SCHEMA evil",
+    # Added in the Phase 1A security review:
+    "alter_database_owner": "ALTER DATABASE safepay_test OWNER TO safepay_app",
+    "alter_schema_owner": "ALTER SCHEMA public OWNER TO safepay_app",
+    "reassign_owned": "REASSIGN OWNED BY safepay_migrator TO safepay_app",
+    "alter_migrator_password": "ALTER ROLE safepay_migrator PASSWORD 'x'",
+    "lift_connection_limit": "ALTER ROLE safepay_app CONNECTION LIMIT -1",
+    "rename_self": "ALTER ROLE safepay_app RENAME TO evil",
+    "create_role": "CREATE ROLE evil",
+    "create_extension": "CREATE EXTENSION dblink",
+    "create_temp_function": (
+        "CREATE FUNCTION pg_temp.evil() RETURNS int LANGUAGE sql AS 'SELECT 1'"
+    ),
+    "reload_conf": "SELECT pg_reload_conf()",
+    "list_server_dir": "SELECT pg_ls_dir('.')",
+    "set_config_replica": "SELECT set_config('session_replication_role', 'replica', false)",
+    "server_lo_import": "SELECT lo_import('/etc/passwd')",
+    "lock_ledger": "LOCK TABLE ledger_entries IN ACCESS EXCLUSIVE MODE",
+    "lock_ledger_rows": "SELECT * FROM ledger_entries FOR UPDATE",
+    "enable_rls": "ALTER TABLE deals ENABLE ROW LEVEL SECURITY",
+    "comment_ledger": "COMMENT ON TABLE ledger_entries IS 'x'",
+    "replace_transition_fn": (
+        "CREATE OR REPLACE FUNCTION safepay_transition_deal("
+        "uuid, text, text, uuid, integer, text) RETURNS jsonb "
+        "LANGUAGE sql AS 'SELECT NULL::jsonb'"
+    ),
 }
 
 
@@ -153,7 +178,7 @@ def test_app_cannot_escalate_or_disable_safety(app_engine: Engine, name: str) ->
     _refused(
         app_engine,
         ESCALATION[name],
-        PERMISSION_DENIED + "|only superusers|not permitted",
+        PERMISSION_DENIED + "|only superusers|not permitted|session user cannot be renamed",
     )
 
 

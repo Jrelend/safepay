@@ -23,6 +23,15 @@ from app.services.idempotency import run_idempotent
 SCOPE = "deal.transition"
 
 
+def idempotency_scope(actor: Actor, actor_user_id: uuid.UUID | None) -> str:
+    """Keys are namespaced per acting principal.
+
+    One user's key can never collide with, block, or reveal the existence of
+    another user's key; SYSTEM actions share one namespace.
+    """
+    return f"{SCOPE}:{actor_user_id}" if actor_user_id else f"{SCOPE}:{actor.value}"
+
+
 class DealTransitionError(Exception):
     """Base class; ``sqlstate`` is the SafePay error code raised by PostgreSQL."""
 
@@ -115,7 +124,11 @@ def transition_deal(
         return result
 
     outcome = run_idempotent(
-        session, scope=SCOPE, key=idempotency_key, request=request, operation=operation
+        session,
+        scope=idempotency_scope(actor, actor_user_id),
+        key=idempotency_key,
+        request=request,
+        operation=operation,
     )
     data = outcome.response
     ledger_tx = data.get("ledger_transaction_id")

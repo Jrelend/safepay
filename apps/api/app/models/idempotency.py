@@ -25,7 +25,8 @@ class IdempotencyRecord(Base):
         ),
     )
 
-    # e.g. "deal.transition"; keys are unique per scope.
+    # e.g. "deal.transition:<acting user id>"; keys are unique per scope, so one
+    # principal's keys can never collide with or reveal another's.
     scope: Mapped[str] = mapped_column(String(64), primary_key=True)
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     # SHA-256 of the canonical JSON request; a reused key with a different hash is rejected.

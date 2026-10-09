@@ -55,6 +55,14 @@ ALTER SCHEMA public OWNER TO safepay_migrator;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO safepay_app;
 
--- Functions created later by the migrator are not executable by PUBLIC by default.
-ALTER DEFAULT PRIVILEGES FOR ROLE safepay_migrator IN SCHEMA public
-    REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+-- Functions created later by the migrator are not executable by PUBLIC by
+-- default. This must be the *global* form: PostgreSQL ignores a per-schema
+-- (IN SCHEMA) REVOKE of a privilege that is granted globally.
+ALTER DEFAULT PRIVILEGES FOR ROLE safepay_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+-- Large-object creation is open to PUBLIC by default; the app never needs it,
+-- and it would let a leaked app credential fill the disk. (Database-local.)
+REVOKE EXECUTE ON FUNCTION
+    pg_catalog.lo_create(oid), pg_catalog.lo_creat(integer),
+    pg_catalog.lo_from_bytea(oid, bytea)
+FROM PUBLIC;

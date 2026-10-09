@@ -61,13 +61,23 @@ def test_same_key_same_request_returns_original_result(app_engine: Engine) -> No
 
 
 def test_same_key_different_request_is_rejected(app_engine: Engine) -> None:
+    """The same principal reusing a key for a different request gets a conflict."""
     sc = new_deal(app_engine)
     act(app_engine, sc, DealAction.SUBMIT, Actor.SELLER, key="reused-key")
+    # Same seller, same key, different action.
     with pytest.raises(IdempotencyKeyReusedError):
-        act(app_engine, sc, DealAction.ACCEPT, Actor.BUYER, key="reused-key")
-    other = new_deal(app_engine)  # same key, same action, different deal
+        act(app_engine, sc, DealAction.CANCEL, Actor.SELLER, key="reused-key")
+    # Same seller, same key, same action, different expected version.
     with pytest.raises(IdempotencyKeyReusedError):
-        act(app_engine, other, DealAction.SUBMIT, Actor.SELLER, key="reused-key")
+        act(app_engine, sc, DealAction.SUBMIT, Actor.SELLER, key="reused-key", expected_version=7)
+    # Nothing ran: the deal moved only once.
+    with Session(app_engine) as s:
+        assert (
+            s.scalar(
+                select(func.count()).select_from(AuditEvent).where(AuditEvent.deal_id == sc.deal_id)
+            )
+            == 1
+        )
 
 
 def test_failed_attempt_is_not_cached(app_engine: Engine) -> None:
@@ -80,7 +90,9 @@ def test_failed_attempt_is_not_cached(app_engine: Engine) -> None:
     assert result.replayed is False
 
 
-def _race(app_engine: Engine, sc: Any, key: str, second_actor_user: uuid.UUID) -> dict[str, Any]:
+def _race(
+    app_engine: Engine, sc: Any, key: str, second_expected_version: int | None
+) -> dict[str, Any]:
     """First request claims the key and holds its transaction open; the second must wait."""
     claimed = threading.Event()
     out: dict[str, Any] = {}
@@ -107,8 +119,9 @@ def _race(app_engine: Engine, sc: Any, key: str, second_actor_user: uuid.UUID) -
                     deal_id=sc.deal_id,
                     action=DealAction.FUND,
                     actor=Actor.BUYER,
-                    actor_user_id=second_actor_user,
+                    actor_user_id=sc.buyer_id,
                     idempotency_key=key,
+                    expected_version=second_expected_version,
                 )
         except Exception as exc:
             out["second"] = exc
@@ -124,7 +137,7 @@ def _race(app_engine: Engine, sc: Any, key: str, second_actor_user: uuid.UUID) -
 def test_concurrent_same_key_executes_once(app_engine: Engine) -> None:
     sc = new_deal(app_engine)
     advance_to_awaiting_payment(app_engine, sc)
-    out = _race(app_engine, sc, "concurrent-key", sc.buyer_id)
+    out = _race(app_engine, sc, "concurrent-key", None)
     assert out["first"].replayed is False
     assert out["second"].replayed is True
     assert out["second"].ledger_transaction_id == out["first"].ledger_transaction_id
@@ -134,7 +147,9 @@ def test_concurrent_same_key_executes_once(app_engine: Engine) -> None:
 def test_concurrent_same_key_different_request_is_rejected(app_engine: Engine) -> None:
     sc = new_deal(app_engine)
     advance_to_awaiting_payment(app_engine, sc)
-    out = _race(app_engine, sc, "concurrent-conflict", sc.seller_id)
+    # Same buyer and key, but a different payload (expected_version) while the first
+    # request still holds its uncommitted claim.
+    out = _race(app_engine, sc, "concurrent-conflict", 3)
     assert out["first"].to_status is DealStatus.FUNDED
     assert isinstance(out["second"], IdempotencyKeyReusedError)
     assert _count(app_engine, LedgerTransaction, sc.deal_id) == 1

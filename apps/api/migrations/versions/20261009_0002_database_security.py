@@ -34,6 +34,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from migrations.safety import refuse_data_loss
+
 revision: str = "0002"
 down_revision: str | None = "0001"
 branch_labels: str | Sequence[str] | None = None
@@ -223,6 +225,27 @@ BEGIN
 END;
 $$;
 
+-- A claim that is never completed must not survive COMMIT (it would block the
+-- key forever). run_idempotent always completes in the same transaction.
+CREATE FUNCTION safepay_require_idempotency_completion() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT FROM idempotency_records
+         WHERE scope = NEW.scope AND key = NEW.key AND completed_at IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'SafePay: idempotency key %/% was claimed but not completed',
+            NEW.scope, NEW.key USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER idempotency_records_completed
+    AFTER INSERT ON idempotency_records
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION safepay_require_idempotency_completion();
+
 CREATE TRIGGER idempotency_records_guard_insert
     BEFORE INSERT ON idempotency_records
     FOR EACH ROW EXECUTE FUNCTION safepay_guard_idempotency_insert();
@@ -284,6 +307,14 @@ BEGIN
             USING ERRCODE = 'SPD03';
     END IF;
 
+    -- A deal cannot leave DRAFT (except by cancellation) without both parties.
+    IF v_deal.status = 'DRAFT' AND v_rule.to_status <> 'CANCELLED' AND (
+        SELECT count(*) FROM deal_participants WHERE deal_id = p_deal_id
+    ) <> 2 THEN
+        RAISE EXCEPTION 'SafePay: deal % needs a buyer and a seller before %', p_deal_id, p_action
+            USING ERRCODE = 'SPD04';
+    END IF;
+
     -- The acting user must really be that participant of this deal.
     IF p_actor IN ('BUYER', 'SELLER') THEN
         IF p_actor_user_id IS NULL OR NOT EXISTS (
@@ -304,10 +335,13 @@ BEGIN
     END IF;
 
     IF v_rule.ledger_effect <> 'NONE' THEN
+        -- Untargeted ON CONFLICT: absorbs a conflict on *any* unique index (code
+        -- or one-escrow-per-deal), so concurrent creation can never error out.
         INSERT INTO ledger_accounts (code, account_type, purpose, deal_id)
         VALUES ('ESCROW:' || p_deal_id, 'LIABILITY', 'DEAL_ESCROW', p_deal_id)
-        ON CONFLICT (code) DO NOTHING;
-        SELECT id INTO STRICT v_escrow FROM ledger_accounts WHERE code = 'ESCROW:' || p_deal_id;
+        ON CONFLICT DO NOTHING;
+        SELECT id INTO STRICT v_escrow FROM ledger_accounts
+         WHERE purpose = 'DEAL_ESCROW' AND deal_id = p_deal_id;
 
         SELECT COALESCE(SUM(CASE direction WHEN 'CREDIT' THEN amount_mnt ELSE -amount_mnt END), 0)
           INTO v_escrow_balance
@@ -339,11 +373,14 @@ BEGIN
                 RAISE EXCEPTION 'SafePay: deal % has no %', p_deal_id, v_payee_role
                     USING ERRCODE = 'SPD04';
             END IF;
+            -- Untargeted ON CONFLICT: two deals paying the same user concurrently
+            -- race on BOTH unique indexes (code and one-wallet-per-owner).
             INSERT INTO ledger_accounts (code, account_type, purpose, owner_user_id)
             VALUES ('WALLET:' || v_payee, 'LIABILITY', 'USER_WALLET', v_payee)
-            ON CONFLICT (code) DO NOTHING;
+            ON CONFLICT DO NOTHING;
             v_debit := v_escrow;
-            SELECT id INTO STRICT v_credit FROM ledger_accounts WHERE code = 'WALLET:' || v_payee;
+            SELECT id INTO STRICT v_credit FROM ledger_accounts
+             WHERE purpose = 'USER_WALLET' AND owner_user_id = v_payee;
         END IF;
 
         -- Deterministic key + partial unique indexes: posted at most once per deal.
@@ -410,6 +447,32 @@ GRANT UPDATE (accepted_at) ON deal_participants TO safepay_app;
 GRANT UPDATE (response, completed_at) ON idempotency_records TO safepay_app;
 
 GRANT EXECUTE ON FUNCTION {TRANSITION_SIGNATURE} TO safepay_app;
+
+"""
+
+HARDEN_FUNCTIONS_SQL = r"""
+-- Functions created by this role in later migrations are NOT executable by
+-- PUBLIC unless explicitly granted. (Must be global: a per-schema REVOKE of a
+-- globally granted default privilege is a no-op in PostgreSQL.)
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+-- Pin search_path on every SafePay function, including trigger functions from
+-- 0001. Deferred constraint triggers fire at COMMIT with the *session's*
+-- search_path, where pg_temp is searched first; pinning prevents any role that
+-- can create temporary tables from shadowing ledger_entries, deal_transitions etc.
+DO $$
+DECLARE
+    fn regprocedure;
+BEGIN
+    FOR fn IN
+        SELECT p.oid::regprocedure FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname LIKE 'safepay\_%'
+    LOOP
+        EXECUTE format('ALTER FUNCTION %s SET search_path = pg_catalog, public, pg_temp', fn);
+    END LOOP;
+END;
+$$;
 """
 
 REVOKE_SQL = rf"""
@@ -425,6 +488,7 @@ GUARD_FUNCTIONS = (
     "safepay_guard_participant_update",
     "safepay_guard_idempotency_insert",
     "safepay_guard_idempotency_update",
+    "safepay_require_idempotency_completion",
 )
 
 
@@ -581,9 +645,11 @@ def upgrade() -> None:
     op.execute(GUARDS_SQL)
     op.execute(TRANSITION_FUNCTION_SQL)
     op.execute(GRANTS_SQL)
+    op.execute(HARDEN_FUNCTIONS_SQL)
 
 
 def downgrade() -> None:
+    refuse_data_loss(("idempotency_records", "ledger_transactions"))
     op.execute(REVOKE_SQL)
     op.execute(f"DROP FUNCTION {TRANSITION_SIGNATURE}")
     for trigger, table in (
@@ -592,6 +658,7 @@ def downgrade() -> None:
         ("deals_guard_update", "deals"),
         ("deal_participants_guard_insert", "deal_participants"),
         ("deal_participants_guard_update", "deal_participants"),
+        ("idempotency_records_completed", "idempotency_records"),
     ):
         op.execute(f"DROP TRIGGER {trigger} ON {table}")
     for fn in GUARD_FUNCTIONS:
