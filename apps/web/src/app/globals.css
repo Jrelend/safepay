@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --foreground: #14181f;
+  --muted: #5b6573;
+  --border: #e3e6eb;
+  --brand: #0b6e4f;
+  --brand-foreground: #ffffff;
+  --brand-soft: #e3f3ec;
+  --warning-soft: #fff4d6;
+  --warning-foreground: #7a5300;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0e1116;
+    --surface: #161b22;
+    --foreground: #e8ecf1;
+    --muted: #9aa4b2;
+    --border: #2a313c;
+    --brand: #34c38f;
+    --brand-foreground: #06140f;
+    --brand-soft: #12291f;
+    --warning-soft: #2e2510;
+    --warning-foreground: #f2c75c;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-foreground: var(--warning-foreground);
+  /* System fonts with full Mongolian Cyrillic (Ө, Ү) coverage; no build-time font download. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}

@@ -1,0 +1,49 @@
+[project]
+name = "safepay-api"
+version = "0.1.0"
+description = "SafePay escrow simulation API (no real money is ever handled)"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.143,<0.144",
+    "uvicorn[standard]>=0.54,<0.55",
+    "sqlalchemy>=2.1,<2.2",
+    "alembic>=1.20,<1.21",
+    "psycopg[binary]>=3.3,<3.4",
+    "pydantic-settings>=2.15,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1,<10",
+    "httpx2>=2.13,<3",
+    "mypy>=2.4,<3",
+    "ruff>=0.16,<0.17",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "DTZ", "PL"]
+ignore = ["PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "S105", "S106"]
+"migrations/**" = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = []
+files = ["app", "tests", "migrations"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires a real PostgreSQL database (DATABASE_URL)",
+]
+addopts = "-ra --strict-markers"
