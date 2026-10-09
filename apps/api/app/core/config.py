@@ -6,7 +6,7 @@ Secrets are never hard-coded; see the repository-level ``.env.example``.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn
+from pydantic import Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,8 +29,15 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] = ["http://localhost:3000"]
 
     # Hard safety switch: SafePay Beta must never move real money. Any value
-    # other than True is rejected at startup.
-    payments_simulation_only: Literal[True] = True
+    # other than true is rejected at startup.
+    payments_simulation_only: bool = True
+
+    @field_validator("payments_simulation_only")
+    @classmethod
+    def _must_be_simulation_only(cls, value: bool) -> bool:
+        if value is not True:
+            raise ValueError("PAYMENTS_SIMULATION_ONLY must be true (no real money, ever)")
+        return value
 
 
 @lru_cache

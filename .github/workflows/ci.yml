@@ -72,6 +72,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
@@ -92,13 +94,25 @@ jobs:
           docker compose -f compose.yaml -f compose.dev.yaml config -q
       - name: Build and start stack
         run: docker compose up --build --detach
-      - name: Smoke test
+      - name: Wait for API (starts only after migrate succeeds)
+        run: curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:8000/health
+      - name: Verify PostgreSQL and migrations
         run: |
-          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:8000/health
-          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:3000/ >/dev/null
+          docker compose exec -T db pg_isready -U safepay -d safepay
+          test "$(docker compose ps -a migrate --format '{{.State}} {{.ExitCode}}')" = "exited 0"
+          docker compose exec -T db psql -U safepay -d safepay -Atc "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0001
+          docker compose exec -T db psql -U safepay -d safepay -Atc "SHOW server_version_num" | grep -q '^17'
+          test "$(docker compose exec -T db psql -U safepay -d safepay -Atc "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal")" = "10"
+      - name: Smoke test API and web
+        run: |
+          curl -fsS http://127.0.0.1:8000/health | tee /dev/stderr | grep -q '"simulation_only":true'
           curl -fsS http://127.0.0.1:8000/ready | tee /dev/stderr | grep -q '"status":"ready"'
-          curl -fsS http://127.0.0.1:3000/ | grep -q 'lang="mn"'
-          curl -fsS http://127.0.0.1:3000/status | grep -q 'Хэвийн'
+          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:3000/ | grep -q 'lang="mn"'
+          # web -> api over the internal network: the status page renders the API's own name/version
+          curl -fsS http://127.0.0.1:3000/status > status.html
+          grep -q 'SafePay API v0.1.0' status.html
+          test "$(grep -o 'Хэвийн' status.html | wc -l)" -ge 3
+          if grep -q 'Ажиллахгүй байна' status.html; then echo 'status page reports a failing check'; exit 1; fi
       - name: Logs on failure
         if: failure()
         run: docker compose logs --no-color
