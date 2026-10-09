@@ -21,7 +21,8 @@ jobs:
         working-directory: apps/api
     services:
       postgres:
-        image: postgres:17-alpine
+        # Official Docker Library image via ECR Public (avoids Docker Hub pull rate limits).
+        image: public.ecr.aws/docker/library/postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci-superuser-password
@@ -109,7 +110,8 @@ jobs:
     needs: [api, web]
     services:
       postgres:
-        image: postgres:17-alpine
+        # Official Docker Library image via ECR Public (avoids Docker Hub pull rate limits).
+        image: public.ecr.aws/docker/library/postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci-superuser-password
