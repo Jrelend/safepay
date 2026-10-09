@@ -1,4 +1,5 @@
-FROM python:3.13-slim AS base
+# Official Docker Library image via ECR Public (same image; avoids Docker Hub pull limits).
+FROM public.ecr.aws/docker/library/python:3.13-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
