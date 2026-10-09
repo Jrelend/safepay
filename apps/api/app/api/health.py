@@ -1,9 +1,11 @@
 """Liveness and readiness probes.
 
 * ``GET /health`` — liveness. Never touches the database; only says the process is up.
-* ``GET /ready``  — readiness. Verifies the database is reachable and that the
-  schema is at the latest Alembic revision. Returns 503 otherwise so load
-  balancers / Docker health checks stop routing traffic.
+* ``GET /ready``  — readiness. Verifies the database is reachable, that the
+  schema is at the latest Alembic revision, and that the API is connected as a
+  least-privileged role (not a superuser, no RLS bypass, owns no objects).
+  Returns 503 otherwise so load balancers / Docker health checks stop routing
+  traffic.
 """
 
 import logging
@@ -23,6 +25,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 
 ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+
+ROLE_PRIVILEGES_SQL = text(
+    """
+    SELECT r.rolsuper OR r.rolbypassrls OR EXISTS (
+               SELECT FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public' AND c.relowner = r.oid
+           ) AS privileged
+      FROM pg_roles r
+     WHERE r.rolname = current_user
+    """
+)
 
 
 class HealthResponse(BaseModel):
@@ -87,11 +101,19 @@ def ready(
                     ok=False,
                     detail=f"database at {sorted(current)}, code expects {sorted(expected)}",
                 )
+            # Fail closed if the API runs with more power than it needs.
+            if conn.execute(ROLE_PRIVILEGES_SQL).scalar_one():
+                checks["db_role"] = CheckResult(
+                    ok=False, detail="API must connect as a least-privileged role (safepay_app)"
+                )
+            else:
+                checks["db_role"] = CheckResult(ok=True)
     except SQLAlchemyError as exc:
         # Do not leak connection strings or driver internals to callers.
         logger.warning("readiness check failed: %s", type(exc).__name__)
         checks.setdefault("database", CheckResult(ok=False, detail="database unavailable"))
         checks.setdefault("migrations", CheckResult(ok=False, detail="not checked"))
+        checks.setdefault("db_role", CheckResult(ok=False, detail="not checked"))
 
     is_ready = all(c.ok for c in checks.values())
     if not is_ready:

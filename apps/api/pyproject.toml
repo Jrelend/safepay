@@ -31,6 +31,10 @@ target-version = "py313"
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "DTZ", "PL"]
 ignore = ["PLR2004"]
 
+[tool.ruff.lint.pylint]
+# Service functions take keyword-only arguments; they are explicit, not confusing.
+max-args = 8
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "S105", "S106"]
 "migrations/**" = ["E501"]
@@ -40,6 +44,8 @@ python_version = "3.13"
 strict = true
 plugins = []
 files = ["app", "tests", "migrations"]
+mypy_path = "."
+explicit_package_bases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

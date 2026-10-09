@@ -23,17 +23,25 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: safepay
-          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-superuser-password
           POSTGRES_DB: safepay
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U safepay"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       APP_ENV: test
-      DATABASE_URL: postgresql+psycopg://safepay:ci-only-password@localhost:5432/safepay
-      TEST_DATABASE_URL: postgresql+psycopg://safepay:ci-only-password@localhost:5432/safepay_test
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: ci-superuser-password
+      # Runtime role and migration role are separate, as in production.
+      DATABASE_URL: postgresql+psycopg://safepay_app:ci-app-password@localhost:5432/safepay
+      MIGRATION_DATABASE_URL: postgresql+psycopg://safepay_migrator:ci-migrator-password@localhost:5432/safepay
+      # Integration tests need a superuser URL to reset the schema and bootstrap roles.
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-superuser-password@localhost:5432/safepay_test
+      TEST_MIGRATOR_PASSWORD: ci-migrator-password
+      TEST_APP_PASSWORD: ci-app-password
       REQUIRE_INTEGRATION_TESTS: "1"
     steps:
       - uses: actions/checkout@v5
@@ -45,17 +53,28 @@ jobs:
         run: uv run ruff check .
       - name: Ruff format
         run: uv run ruff format --check .
-      - name: mypy
+      - name: mypy (strict)
         run: uv run mypy
-      - name: Create test database
-        run: PGPASSWORD=ci-only-password psql -h localhost -U safepay -d safepay -c "CREATE DATABASE safepay_test"
-      - name: Migrations upgrade / downgrade / upgrade
+      - name: Bootstrap database roles
+        run: |
+          psql -d safepay -v ON_ERROR_STOP=1 -c "CREATE DATABASE safepay_test"
+          psql -d safepay -v ON_ERROR_STOP=1 -v dbname=safepay \
+            -v migrator_password=ci-migrator-password -v app_password=ci-app-password \
+            -f ../../infra/postgres/bootstrap-roles.sql
+      - name: Migrations refuse the superuser
+        run: |
+          if MIGRATION_DATABASE_URL=postgresql+psycopg://postgres:ci-superuser-password@localhost:5432/safepay \
+             uv run alembic upgrade head; then
+            echo "migration ran as superuser"; exit 1
+          fi
+          test "$(psql -d safepay -Atc "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = "0"
+      - name: Migrations upgrade / check / downgrade / upgrade (as safepay_migrator)
         run: |
           uv run alembic upgrade head
           uv run alembic check
           uv run alembic downgrade base
           uv run alembic upgrade head
-      - name: pytest (unit + PostgreSQL integration)
+      - name: pytest (unit + PostgreSQL integration, incl. privilege tests)
         run: uv run pytest
 
   web:
@@ -96,17 +115,37 @@ jobs:
         run: docker compose up --build --detach
       - name: Wait for API (starts only after migrate succeeds)
         run: curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:8000/health
-      - name: Verify PostgreSQL and migrations
+      - name: Verify PostgreSQL, migrations and database roles
         run: |
-          docker compose exec -T db pg_isready -U safepay -d safepay
+          psql() { docker compose exec -T db psql -U postgres -d safepay -v ON_ERROR_STOP=1 -At "$@"; }
+          docker compose exec -T db pg_isready -h 127.0.0.1 -U postgres -d safepay
           test "$(docker compose ps -a migrate --format '{{.State}} {{.ExitCode}}')" = "exited 0"
-          docker compose exec -T db psql -U safepay -d safepay -Atc "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0001
-          docker compose exec -T db psql -U safepay -d safepay -Atc "SHOW server_version_num" | grep -q '^17'
-          test "$(docker compose exec -T db psql -U safepay -d safepay -Atc "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal")" = "10"
+          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0002
+          psql -c "SHOW server_version_num" | grep -q '^17'
+          # Roles exist, are not superusers, and the migrator owns everything.
+          test "$(psql -c "SELECT string_agg(rolname || ':' || rolsuper, ',' ORDER BY rolname) FROM pg_roles WHERE rolname LIKE 'safepay_%'")" = "safepay_app:false,safepay_migrator:false"
+          test "$(psql -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tableowner <> 'safepay_migrator'")" = "0"
+      - name: App role cannot tamper with the ledger (live stack)
+        run: |
+          as_app() { docker compose exec -T -e PGPASSWORD="$SAFEPAY_APP_PASSWORD" db \
+            psql -h 127.0.0.1 -U safepay_app -d safepay -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+          for stmt in "UPDATE ledger_entries SET amount_mnt = 1" \
+                      "DELETE FROM audit_events" \
+                      "TRUNCATE ledger_transactions CASCADE" \
+                      "ALTER TABLE ledger_entries DISABLE TRIGGER ALL" \
+                      "SET session_replication_role = replica" \
+                      "UPDATE deals SET status = 'COMPLETED'"; do
+            if out=$(as_app "$stmt"); then echo "NOT REFUSED: $stmt"; exit 1; fi
+            echo "$out" | grep -Eq "permission denied|must be owner" || { echo "$out"; exit 1; }
+            echo "refused: $stmt"
+          done
+        env:
+          SAFEPAY_APP_PASSWORD: local-app-password-change-me
       - name: Smoke test API and web
         run: |
           curl -fsS http://127.0.0.1:8000/health | tee /dev/stderr | grep -q '"simulation_only":true'
           curl -fsS http://127.0.0.1:8000/ready | tee /dev/stderr | grep -q '"status":"ready"'
+          curl -fsS http://127.0.0.1:8000/ready | grep -q '"db_role":{"ok":true'
           curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:3000/ | grep -q 'lang="mn"'
           # web -> api over the internal network: the status page renders the API's own name/version
           curl -fsS http://127.0.0.1:3000/status > status.html

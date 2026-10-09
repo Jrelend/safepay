@@ -4,7 +4,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.deal_states import Actor
-from app.models import AuditEvent, DealParticipant, ParticipantRole
+from app.models import AuditEvent, Deal, DealParticipant, ParticipantRole
 from tests.integration.conftest import make_deal, make_user
 
 
@@ -17,18 +17,35 @@ def test_deal_amount_must_be_positive(session: Session, amount: int) -> None:
 
 def test_deal_currency_is_mnt_only(session: Session) -> None:
     user = make_user(session)
+    deal = Deal(
+        reference="SP-USD00001", title="x", amount_mnt=1, currency="USD", created_by_id=user.id
+    )
+    session.add(deal)
+    with pytest.raises(IntegrityError, match="currency_mnt"):
+        session.flush()
+
+
+def test_deal_currency_cannot_be_changed(session: Session) -> None:
+    user = make_user(session)
     deal = make_deal(session, user)
     session.commit()
-    with pytest.raises(IntegrityError, match="currency_mnt"):
-        session.execute(text("UPDATE deals SET currency = 'USD' WHERE id = :id"), {"id": deal.id})
+    with pytest.raises(DBAPIError, match="identity columns are immutable"):
+        session.execute(
+            text("UPDATE deals SET currency = 'USD', version = version + 1 WHERE id = :id"),
+            {"id": deal.id},
+        )
 
 
 def test_deal_status_must_be_known(session: Session) -> None:
     user = make_user(session)
     deal = make_deal(session, user)
     session.commit()
-    with pytest.raises(IntegrityError, match="deal_status"):
-        session.execute(text("UPDATE deals SET status = 'PAID' WHERE id = :id"), {"id": deal.id})
+    # Even the schema owner cannot jump to an unknown/illegal state.
+    with pytest.raises(DBAPIError, match="illegal deal transition DRAFT -> PAID"):
+        session.execute(
+            text("UPDATE deals SET status = 'PAID', version = version + 1 WHERE id = :id"),
+            {"id": deal.id},
+        )
 
 
 def test_one_buyer_and_one_seller_per_deal(session: Session) -> None:

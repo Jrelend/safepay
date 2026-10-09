@@ -18,10 +18,15 @@ class Settings(BaseSettings):
     app_name: str = "SafePay API"
     app_version: str = "0.1.0"
 
+    # Runtime connection, as the least-privileged ``safepay_app`` role.
     # Must use the psycopg 3 driver, e.g. postgresql+psycopg://user:pass@host:5432/db
     database_url: PostgresDsn = Field(
-        default=PostgresDsn("postgresql+psycopg://safepay:safepay@localhost:5432/safepay"),
+        default=PostgresDsn("postgresql+psycopg://safepay_app:safepay_app@localhost:5432/safepay"),
     )
+    # Used only by Alembic, as the schema-owning ``safepay_migrator`` role.
+    # Falls back to DATABASE_URL when unset (the migration then refuses to run
+    # unless that role owns the schema; see migration 0002).
+    migration_database_url: PostgresDsn | None = None
     db_pool_size: int = 5
     db_pool_timeout_seconds: int = 5
     readiness_db_timeout_ms: int = 2000

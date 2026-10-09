@@ -23,6 +23,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from migrations.safety import refuse_data_loss
+
 revision: str = "0001"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
@@ -542,6 +544,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    refuse_data_loss(
+        (
+            "users",
+            "deals",
+            "deal_participants",
+            "ledger_accounts",
+            "ledger_transactions",
+            "ledger_entries",
+            "audit_events",
+        )
+    )
     op.drop_index(op.f("ix_ledger_entries_transaction_id"), table_name="ledger_entries")
     op.drop_index("ix_ledger_entries_account_id_created_at", table_name="ledger_entries")
     op.drop_table("ledger_entries")

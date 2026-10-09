@@ -41,6 +41,17 @@ class AccountPurpose(StrEnum):
     FEE_REVENUE = "FEE_REVENUE"
 
 
+class LedgerTransactionKind(StrEnum):
+    """Journal kinds with special guarantees. Escrow kinds are posted only by
+    the ``safepay_transition_deal`` database function, at most once per deal."""
+
+    ESCROW_HOLD = "ESCROW_HOLD"
+    ESCROW_RELEASE = "ESCROW_RELEASE"
+    ESCROW_REFUND = "ESCROW_REFUND"
+
+
+ESCROW_KINDS: frozenset[LedgerTransactionKind] = frozenset(LedgerTransactionKind)
+
 DEBIT_NORMAL: frozenset[AccountType] = frozenset({AccountType.ASSET, AccountType.EXPENSE})
 
 PURPOSE_ACCOUNT_TYPE: dict[AccountPurpose, AccountType] = {
