@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (ruff, mypy, alembic, pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: safepay
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: safepay
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U safepay"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://safepay:ci-only-password@localhost:5432/safepay
+      TEST_DATABASE_URL: postgresql+psycopg://safepay:ci-only-password@localhost:5432/safepay_test
+      REQUIRE_INTEGRATION_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: mypy
+        run: uv run mypy
+      - name: Create test database
+        run: PGPASSWORD=ci-only-password psql -h localhost -U safepay -d safepay -c "CREATE DATABASE safepay_test"
+      - name: Migrations upgrade / downgrade / upgrade
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+      - name: pytest (unit + PostgreSQL integration)
+        run: uv run pytest
+
+  web:
+    name: Web (eslint, tsc, vitest, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  compose:
+    name: Docker Compose smoke test
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    steps:
+      - uses: actions/checkout@v5
+      - run: cp .env.example .env
+      - name: Validate compose files
+        run: |
+          docker compose config -q
+          docker compose -f compose.yaml -f compose.dev.yaml config -q
+      - name: Build and start stack
+        run: docker compose up --build --detach
+      - name: Smoke test
+        run: |
+          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:8000/health
+          curl -fsS --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:3000/ >/dev/null
+          curl -fsS http://127.0.0.1:8000/ready | tee /dev/stderr | grep -q '"status":"ready"'
+          curl -fsS http://127.0.0.1:3000/ | grep -q 'lang="mn"'
+          curl -fsS http://127.0.0.1:3000/status | grep -q 'Хэвийн'
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
