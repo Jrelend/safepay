@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   clientAddress,
   downstreamResponseHeaders,
+  readCapped,
   resolveUpstream,
   upstreamRequestHeaders,
 } from "./proxy";
@@ -60,5 +61,27 @@ describe("headers", () => {
     expect(out.getSetCookie()).toEqual(["a=1; HttpOnly", "b=2"]);
     expect(out.get("server")).toBeNull();
     expect(out.get("cache-control")).toBe("no-store");
+  });
+});
+
+describe("dev routes and body cap", () => {
+  it("forwards /dev only when explicitly enabled", () => {
+    expect(resolveUpstream(["dev", "mailbox"], env)).toBeNull();
+    expect(resolveUpstream(["dev", "mailbox"], { ...env, devRoutes: true })?.path).toBe("/dev/mailbox");
+  });
+
+  function stream(chunks: number[]): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(c) {
+        for (const n of chunks) c.enqueue(new Uint8Array(n));
+        c.close();
+      },
+    });
+  }
+
+  it("caps chunked bodies without a Content-Length", async () => {
+    expect((await readCapped(stream([10, 10]), 20))?.byteLength).toBe(20);
+    expect(await readCapped(stream([10, 10, 1]), 20)).toBeNull();
+    expect((await readCapped(null, 20))?.byteLength).toBe(0);
   });
 });

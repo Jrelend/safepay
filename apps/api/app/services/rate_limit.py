@@ -27,6 +27,9 @@ EMAIL_ACTION_PER_IP = Limit("email:ip", 20, 3600)
 TOKEN_ATTEMPT_PER_IP = Limit("token:ip", 30, 900)
 MUTATION_PER_USER = Limit("mutation:user", 120, 60)
 EVIDENCE_PER_USER = Limit("evidence:user", 30, 3600)
+PROFILE_PER_USER = Limit("profile:user", 10, 3600)
+ADMIN_LOGIN_PER_IP = Limit("admin-login:ip", 10, 900)
+ADMIN_LOGIN_PER_EMAIL = Limit("admin-login:email", 5, 900)
 
 
 class RateLimitedError(Exception):

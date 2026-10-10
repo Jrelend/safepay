@@ -11,6 +11,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.integration.web import (
     Browser,
+    admin_login,
     grant_admin,
     make_settings,
     new_deal_body,
@@ -59,9 +60,9 @@ def world(app_url: URL, admin_role_url: URL, engine: Engine) -> World:
     signup(seller, engine, name="Худалдагч")
     signup(buyer, engine, name="Худалдан авагч")
     signup(stranger, engine, name="Гадны хүн")
-    grant_admin(engine, signup(admin_public, engine, name="Админ"))
-    admin = Browser(adm)
-    admin.client.cookies.update(dict(admin_public.client.cookies))
+    admin_email = signup(admin_public, engine, name="Админ")
+    secret = grant_admin(engine, admin_email)
+    admin = admin_login(adm, engine, admin_email, secret)
     deal_id = agreed_and_funded(seller, buyer)
     deal = ok(buyer.act(deal_id, "OPEN_DISPUTE", note="Бараа эвдэрсэн ирсэн"))["deal"]
     assert deal["status"] == "DISPUTED" and deal["dispute_id"]
@@ -159,9 +160,23 @@ def test_public_api_has_no_admin_routes(world: World) -> None:
         assert world.admin_public.get(path).status_code == 404
 
 
-def test_non_admin_is_refused_by_admin_api(world: World) -> None:
+def test_public_sessions_are_not_accepted_by_admin_api(world: World) -> None:
+    """Neither a buyer's nor even an admin's PUBLIC session works on the admin API."""
+    for public in (world.buyer, world.admin_public):
+        b = Browser(world.admin_settings)
+        b.client.cookies.update(dict(public.client.cookies))
+        assert b.get("/admin/overview").status_code == 401
+        assert b.get("/admin/auth/me").status_code == 401
+
+
+def test_non_admin_is_refused_by_admin_api(world: World, engine: Engine) -> None:
     b = Browser(world.admin_settings)
-    b.client.cookies.update(dict(world.buyer.client.cookies))
+    # A normal user cannot log in to the admin API at all (no admin credentials).
+    login = b.post(
+        "/admin/auth/login",
+        json={"email": "nobody@example.com", "password": "x" * 12, "code": "123456"},
+    )
+    assert login.status_code == 401
     for path in (
         "/admin/overview",
         "/admin/disputes",
@@ -169,12 +184,12 @@ def test_non_admin_is_refused_by_admin_api(world: World) -> None:
         "/admin/users",
         "/admin/audit",
     ):
-        assert b.get(path).status_code == 403
+        assert b.get(path).status_code == 401
     r = b.post(
         f"/admin/disputes/{world.dispute_id}/decision",
         json={"outcome": "REFUND_TO_BUYER", "reason": "өөртөө буцаалт"},
     )
-    assert r.status_code == 403
+    assert r.status_code in (401, 403)
     anon = Browser(world.admin_settings)
     assert anon.get("/admin/overview").status_code == 401
 

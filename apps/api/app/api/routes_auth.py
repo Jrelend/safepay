@@ -90,6 +90,15 @@ class SessionOut(BaseModel):
     current: bool
 
 
+def email_key(raw: str) -> str:
+    """Rate-limit key for an email: the SAME normalization as the account lookup, so
+    Unicode look-alikes (e.g. fullwidth domain letters) share one budget."""
+    try:
+        return accounts.normalize_email(raw)
+    except accounts.InvalidEmailError:
+        return raw.strip().lower()
+
+
 def limit(request: Request, limit_: rl.Limit, key: str) -> None:
     try:
         rl.hit(request.app.state.engine, limit_, key)
@@ -164,7 +173,7 @@ def resend_verification(
     body: EmailIn, request: Request, db: DbDep, settings: SettingsDep
 ) -> Accepted:
     limit(request, rl.EMAIL_ACTION_PER_IP, client_ip(request, settings))
-    limit(request, rl.EMAIL_ACTION_PER_EMAIL, body.email.strip())
+    limit(request, rl.EMAIL_ACTION_PER_EMAIL, email_key(body.email))
     with atomic(db):
         accounts.resend_verification(db, settings, email=body.email)
     return Accepted()
@@ -176,7 +185,7 @@ def login(
 ) -> MeOut:
     ip = client_ip(request, settings)
     limit(request, rl.LOGIN_PER_IP, ip)
-    limit(request, rl.LOGIN_PER_EMAIL, body.email.strip())
+    limit(request, rl.LOGIN_PER_EMAIL, email_key(body.email))
     try:
         with atomic(db):
             user = accounts.authenticate(db, email=body.email, password=body.password)
@@ -187,7 +196,7 @@ def login(
                 user_agent=request.headers.get("user-agent", ""),
                 ip=ip,
             )
-            is_admin = db.get(Admin, user.id) is not None
+            is_admin = db.scalar(select(Admin.user_id).where(Admin.user_id == user.id)) is not None
             me = _me(db, user.id, is_admin)
     except accounts.InvalidCredentialsError as exc:
         raise ApiError(401, "invalid_credentials", "email or password is incorrect") from exc
@@ -214,7 +223,7 @@ def password_reset_request(
     body: EmailIn, request: Request, db: DbDep, settings: SettingsDep
 ) -> Accepted:
     limit(request, rl.EMAIL_ACTION_PER_IP, client_ip(request, settings))
-    limit(request, rl.EMAIL_ACTION_PER_EMAIL, body.email.strip())
+    limit(request, rl.EMAIL_ACTION_PER_EMAIL, email_key(body.email))
     with atomic(db):
         accounts.request_password_reset(db, settings, email=body.email)
     return Accepted()
@@ -306,7 +315,9 @@ def revoke_other_sessions(ctx: CurrentUser, db: DbDep) -> dict[str, str]:
 
 
 @router.patch("/me/profile", response_model=MeOut)
-def update_profile(ctx: CurrentUser, body: ProfileIn, db: DbDep) -> MeOut:
+def update_profile(ctx: CurrentUser, body: ProfileIn, request: Request, db: DbDep) -> MeOut:
+    # Bounded: the phone_taken response would otherwise allow fast enumeration.
+    limit(request, rl.PROFILE_PER_USER, str(ctx.user_id))
     if (
         body.phone_e164 is not None
         and body.phone_e164 != ""

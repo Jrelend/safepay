@@ -137,7 +137,8 @@ def add_statement(
     except svc.DisputeNotVisibleError as exc:
         raise _not_found() from exc
     except svc.EvidenceRejectedError as exc:
-        raise ApiError(422, exc.code, "statement rejected") from exc
+        status = 409 if exc.code == "evidence_limit" else 422
+        raise ApiError(status, exc.code, "statement rejected") from exc
     except DBAPIError as exc:
         raise _evidence_db_error(exc) from exc
     return get_dispute(dispute_id, ctx, db)
@@ -167,7 +168,7 @@ async def add_file(
     except svc.DisputeNotVisibleError as exc:
         raise _not_found() from exc
     except svc.EvidenceRejectedError as exc:
-        status = 413 if exc.code == "file_too_large" else 422
+        status = {"file_too_large": 413, "evidence_limit": 409}.get(exc.code, 422)
         raise ApiError(status, exc.code, "file rejected") from exc
     except DBAPIError as exc:
         raise _evidence_db_error(exc) from exc

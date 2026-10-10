@@ -20,6 +20,9 @@ from app.models.base import Base, CreatedAtMixin, UUIDPrimaryKeyMixin, str_enum
 
 MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 MAX_EVIDENCE_TEXT = 5000
+# Evidence is append-only (never deletable), so cap what one party can add per dispute.
+MAX_FILES_PER_PARTY = 10
+MAX_STATEMENTS_PER_PARTY = 50
 
 
 class DisputeStatus(StrEnum):

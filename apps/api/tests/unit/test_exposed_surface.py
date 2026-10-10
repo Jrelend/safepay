@@ -65,6 +65,9 @@ ADMIN_ROUTES = (
     HEALTH
     | DOCS
     | {
+        ("POST", "/admin/auth/login"),
+        ("POST", "/admin/auth/logout"),
+        ("GET", "/admin/auth/me"),
         ("GET", "/admin/overview"),
         ("GET", "/admin/disputes"),
         ("GET", "/admin/disputes/{dispute_id}"),
@@ -154,8 +157,10 @@ def test_dev_mailbox_requires_local_env_and_flag() -> None:
 
     assert not has_mailbox(app_env="local")
     assert has_mailbox(app_env="local", dev_mailbox_enabled=True)
-    assert not has_mailbox(app_env="production", dev_mailbox_enabled=True)
-    assert not has_mailbox(app_env="staging", dev_mailbox_enabled=True)
+    # Deployed environments refuse to even start with the mailbox flag on.
+    for env in ("production", "staging"):
+        with pytest.raises(ValueError, match="DEV_MAILBOX_ENABLED must be false"):
+            _settings(app_env=env, dev_mailbox_enabled=True)
 
 
 def test_http_layer_never_calls_system_or_admin_db_functions_from_public_routes() -> None:

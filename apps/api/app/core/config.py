@@ -6,7 +6,7 @@ Secrets are never hard-coded; see the repository-level ``.env.example``.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,6 +55,8 @@ class Settings(BaseSettings):
 
     # Background worker (safepay_system role).
     system_database_url: PostgresDsn | None = None
+    admin_session_ttl_hours: int = Field(default=8, ge=1, le=24)
+    admin_session_idle_minutes: int = Field(default=30, ge=5, le=240)
     worker_interval_seconds: int = Field(default=60, ge=5, le=3600)
     # Beta v0.1: an expired inspection window never releases escrow by itself. Even if
     # set, the DB still refuses unless platform_policy.auto_release_enabled is true.
@@ -63,6 +65,8 @@ class Settings(BaseSettings):
     # Hard safety switch: SafePay Beta must never move real money. Any value
     # other than true is rejected at startup.
     payments_simulation_only: bool = True
+    # The only payment mode that exists. Anything else (e.g. "live") fails at startup.
+    payment_mode: Literal["simulation"] = "simulation"
 
     @field_validator("payments_simulation_only")
     @classmethod
@@ -70,6 +74,24 @@ class Settings(BaseSettings):
         if value is not True:
             raise ValueError("PAYMENTS_SIMULATION_ONLY must be true (no real money, ever)")
         return value
+
+    @model_validator(mode="after")
+    def _deployed_environments_are_locked_down(self) -> "Settings":
+        """Staging and production refuse to start with development conveniences."""
+        if self.app_env not in ("staging", "production"):
+            return self
+        problems = []
+        if self.dev_mailbox_enabled:
+            problems.append("DEV_MAILBOX_ENABLED must be false")
+        if self.cookie_secure is False:
+            problems.append("COOKIE_SECURE must not be false")
+        if not self.public_web_url.startswith("https://"):
+            problems.append("PUBLIC_WEB_URL must be https://")
+        if any(not o.startswith("https://") for o in self.cors_allowed_origins):
+            problems.append("CORS_ALLOWED_ORIGINS must all be https://")
+        if problems:
+            raise ValueError(f"unsafe {self.app_env} configuration: " + "; ".join(problems))
+        return self
 
     @property
     def secure_cookies(self) -> bool:

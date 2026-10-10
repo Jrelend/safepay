@@ -140,7 +140,7 @@ function Detail() {
             ["Хүлээлгэн өгөх", DELIVERY_LABEL[d.delivery_method]],
             ["Шалгах хугацаа", `${d.inspection_days} хоног`],
             [d.my_role === "BUYER" ? "Худалдагч" : "Худалдан авагч", d.counterparty_name ?? "Нэгдээгүй"],
-            ...(d.counterparty_phone ? [["Утас", d.counterparty_phone] as [string, string]] : []),
+            ...(d.counterparty_phone ? [["Утас (баталгаажаагүй)", d.counterparty_phone] as [string, string]] : []),
             ["Таны зөвшөөрөл", d.my_accepted ? "Зөвшөөрсөн ✓" : "Хүлээгдэж буй"],
             ["Нөгөө талын зөвшөөрөл", d.counterparty_accepted ? "Зөвшөөрсөн ✓" : "Хүлээгдэж буй"],
             ["Үүсгэсэн", formatDateTime(d.created_at)],

@@ -127,11 +127,29 @@ def _consume_token(db: Session, raw: str, purpose: TokenPurpose) -> AuthToken:
     return token
 
 
+def _retire_tokens(db: Session, user_id: uuid.UUID, purpose: TokenPurpose) -> None:
+    """Invalidate every outstanding one-time token of ``purpose`` for the user."""
+    db.flush()  # persist the token just consumed first (its used_at is write-once)
+    db.execute(
+        update(AuthToken)
+        .where(
+            AuthToken.user_id == user_id,
+            AuthToken.purpose == purpose,
+            AuthToken.used_at.is_(None),
+        )
+        .values(used_at=datetime.now(UTC))
+    )
+
+
 def verify_email(db: Session, *, token: str) -> None:
     record = _consume_token(db, token, TokenPurpose.VERIFY_EMAIL)
     user = db.get_one(User, record.user_id)
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
+        _retire_tokens(db, user.id, TokenPurpose.VERIFY_EMAIL)
+        # Whoever registered the address may have signed in before its owner proved
+        # control of it; those pre-verification sessions do not survive verification.
+        revoke_sessions(db, user.id)
 
 
 def request_password_reset(db: Session, settings: Settings, *, email: str) -> None:
@@ -172,6 +190,7 @@ def confirm_password_reset(db: Session, *, token: str, new_password: str) -> Non
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
     revoke_sessions(db, user.id)
+    _retire_tokens(db, user.id, TokenPurpose.RESET_PASSWORD)
     _outbox(db, user.email, "password_changed", {"name": user.display_name})
 
 
@@ -184,6 +203,7 @@ def change_password(
     check_password_policy(new, email=user.email)
     user.password_hash = hash_password(new)
     revoke_sessions(db, user.id, keep=session_id)
+    _retire_tokens(db, user.id, TokenPurpose.RESET_PASSWORD)
     _outbox(db, user.email, "password_changed", {"name": user.display_name})
 
 

@@ -115,6 +115,8 @@ services:
     environment:
       API_INTERNAL_URL: http://api:8000
       ADMIN_API_INTERNAL_URL: http://admin-api:8000
+      # The web proxy forwards /api/dev/* (simulated mailbox) only when this is true.
+      ENABLE_DEV_ROUTES: ${DEV_MAILBOX_ENABLED:-false}
     depends_on:
       api:
         condition: service_healthy

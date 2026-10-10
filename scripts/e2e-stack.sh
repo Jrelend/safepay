@@ -41,7 +41,7 @@ env "${common[@]}" API_MODE=admin DEV_MAILBOX_ENABLED=false \
   nohup uv run uvicorn app.main:app --port 8001 >"$LOG_DIR/admin-api.log" 2>&1 &
 
 cd "$ROOT/apps/web"
-API_INTERNAL_URL=http://127.0.0.1:8000 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8001 PORT=3000 \
+API_INTERNAL_URL=http://127.0.0.1:8000 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8001 PORT=3000 ENABLE_DEV_ROUTES=true \
   nohup npx next start >"$LOG_DIR/web.log" 2>&1 &
 
 for url in http://127.0.0.1:8000/ready http://127.0.0.1:8001/ready http://127.0.0.1:3000/; do

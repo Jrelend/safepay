@@ -7,7 +7,9 @@ from typing import Any
 from fastapi.testclient import TestClient
 from sqlalchemy import URL, Engine, text
 
+from app.core import totp
 from app.core.config import Settings
+from app.core.security import hash_password
 from app.main import create_app
 
 ORIGIN = "http://web.test"
@@ -22,8 +24,18 @@ def make_settings(url: URL, mode: str, **extra: Any) -> Settings:
         cors_allowed_origins=[ORIGIN],
         public_web_url=ORIGIN,
         dev_mailbox_enabled=True,
+        db_pool_size=1,  # many short-lived test apps share each role's connection limit
         **extra,
     )
+
+
+_OPEN: list["Browser"] = []
+
+
+def close_all() -> None:
+    """Dispose every test app's engine (role connection limits are small)."""
+    while _OPEN:
+        _OPEN.pop().app.state.engine.dispose()
 
 
 class Browser:
@@ -31,8 +43,12 @@ class Browser:
 
     def __init__(self, settings: Settings) -> None:
         self.app = create_app(settings)
-        self.client = TestClient(self.app, base_url="http://api.test")
-        self.csrf_cookie = "__Host-safepay_csrf" if settings.secure_cookies else "safepay_csrf"
+        _OPEN.append(self)
+        scheme = "https" if settings.secure_cookies else "http"  # Secure cookies need https
+        self.client = TestClient(self.app, base_url=f"{scheme}://api.test")
+        prefix = "__Host-" if settings.secure_cookies else ""
+        name = "safepay_admin_csrf" if settings.api_mode == "admin" else "safepay_csrf"
+        self.csrf_cookie = prefix + name
 
     def request(self, method: str, path: str, *, csrf: bool = True, **kw: Any) -> Any:
         headers = {"Origin": ORIGIN, **kw.pop("headers", {})}
@@ -98,14 +114,47 @@ def user_id(owner: Engine, email: str) -> uuid.UUID:
     return uid
 
 
-def grant_admin(owner: Engine, email: str) -> None:
+ADMIN_PASSWORD = "Separate-Admin-Secret-77"
+
+
+def grant_admin(owner: Engine, email: str) -> str:
+    """Grant admin with a separate admin password + TOTP secret (as the owner CLI does).
+    Returns the TOTP secret."""
+    secret = totp.new_secret()
     with owner.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO admins (user_id, note) SELECT id, 'test' FROM users WHERE email = :e"
+                "INSERT INTO admins (user_id, note, password_hash, totp_secret) "
+                "SELECT id, 'test', :h, :s FROM users WHERE email = :e"
+            ),
+            {"e": email, "h": hash_password(ADMIN_PASSWORD), "s": secret},
+        )
+    return secret
+
+
+def next_code(owner: Engine, email: str, secret: str) -> str:
+    """A TOTP code the server will still accept (codes are single-use per step)."""
+    with owner.connect() as conn:
+        last = conn.execute(
+            text(
+                "SELECT a.totp_last_step FROM admins a JOIN users u ON u.id = a.user_id "
+                "WHERE u.email = :e"
             ),
             {"e": email},
-        )
+        ).scalar_one()
+    step = max(totp.current_step(), last + 1)
+    return totp.code_at(secret, step)
+
+
+def admin_login(admin_settings: Settings, owner: Engine, email: str, secret: str) -> "Browser":
+    """A browser signed in to the ADMIN API with its own admin session."""
+    b = Browser(admin_settings)
+    r = b.post(
+        "/admin/auth/login",
+        json={"email": email, "password": ADMIN_PASSWORD, "code": next_code(owner, email, secret)},
+    )
+    assert r.status_code == 200, r.text
+    return b
 
 
 def new_deal_body(role: str = "SELLER", **kw: Any) -> dict[str, Any]:

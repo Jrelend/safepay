@@ -1,6 +1,16 @@
 import { expect, test } from "@playwright/test";
 
-import { act, createDeal, grantAdmin, newUserPage, resetRateLimits, shot, signUp, uniqueEmail } from "./helpers";
+import {
+  act,
+  adminSignIn,
+  createDeal,
+  grantAdmin,
+  newUserPage,
+  resetRateLimits,
+  shot,
+  signUp,
+  uniqueEmail,
+} from "./helpers";
 
 test.beforeEach(() => resetRateLimits());
 
@@ -51,14 +61,18 @@ test("buyer disputes, admin refunds, everyone sees the outcome", async ({ browse
   await stranger.goto(disputeUrl);
   await expect(stranger.getByText("Олдсонгүй эсвэл танд үзэх эрх байхгүй.")).toBeVisible();
   await stranger.goto("/admin");
-  await expect(stranger.getByText("Энэ хэсэг зөвхөн SafePay-ийн ажилтанд нээлттэй.")).toBeVisible();
+  await expect(stranger).toHaveURL(/\/admin\/login/);
+  expect((await stranger.request.get("/api/admin/overview")).status()).toBe(401);
 
   // Admin decides on the separate admin API.
   const adminEmail = uniqueEmail("admin");
   await signUp(admin, "Админ", adminEmail);
-  grantAdmin(adminEmail);
+  const secret = grantAdmin(adminEmail);
+  // The user's normal session is NOT an admin session: /admin asks for admin sign-in.
   await admin.goto("/admin");
-  await expect(admin.getByText("Админ самбар")).toBeVisible();
+  await expect(admin).toHaveURL(/\/admin\/login/);
+  await shot(admin, "14-admin-login");
+  await adminSignIn(admin, adminEmail, secret);
   await admin.getByRole("link", { name: /Samsung TV/ }).first().click();
   await expect(admin.getByText("tv.png")).toBeVisible();
   await admin.getByLabel(/Дотоод тэмдэглэл/).fill("Зураг хагарлыг харуулж байна.");

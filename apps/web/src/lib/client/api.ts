@@ -15,11 +15,14 @@ export class ApiError extends Error {
 }
 
 const CSRF_COOKIES = ["__Host-safepay_csrf", "safepay_csrf"];
+// The admin API has its own session and CSRF token.
+const ADMIN_CSRF_COOKIES = ["__Host-safepay_admin_csrf", "safepay_admin_csrf"];
 
-export function readCsrfToken(cookieString: string): string | null {
+export function readCsrfToken(cookieString: string, admin = false): string | null {
+  const names = admin ? ADMIN_CSRF_COOKIES : CSRF_COOKIES;
   for (const part of cookieString.split(";")) {
     const [name, ...rest] = part.trim().split("=");
-    if (CSRF_COOKIES.includes(name)) return decodeURIComponent(rest.join("="));
+    if (names.includes(name)) return decodeURIComponent(rest.join("="));
   }
   return null;
 }
@@ -39,7 +42,8 @@ export async function api<T>(path: string, opts: Options = {}): Promise<T> {
   const method = opts.method ?? (opts.json !== undefined || opts.form ? "POST" : "GET");
   const headers: Record<string, string> = { accept: "application/json" };
   if (method !== "GET") {
-    const csrf = typeof document === "undefined" ? null : readCsrfToken(document.cookie);
+    const csrf =
+      typeof document === "undefined" ? null : readCsrfToken(document.cookie, path.startsWith("/admin/"));
     if (csrf) headers["x-csrf-token"] = csrf;
   }
   if (opts.idempotencyKey) headers["idempotency-key"] = opts.idempotencyKey;

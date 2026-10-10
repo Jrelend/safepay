@@ -36,6 +36,31 @@ class UserSession(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     ip_address: Mapped[str] = mapped_column(String(64), default="", server_default="")
 
 
+class AdminSession(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """Admin-API sessions: a separate store that only ``safepay_admin`` can write."""
+
+    __tablename__ = "admin_sessions"
+    __table_args__ = (
+        CheckConstraint(f"token_hash {SHA256_HEX}", name="token_hash_sha256"),
+        CheckConstraint(f"csrf_hash {SHA256_HEX}", name="csrf_hash_sha256"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+        Index("ix_admin_sessions_admin_user_id", "admin_user_id"),
+    )
+
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    csrf_hash: Mapped[str] = mapped_column(String(64))
+    admin_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("admins.user_id", ondelete="CASCADE")
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    user_agent: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="", server_default="")
+
+
 class TokenPurpose(StrEnum):
     VERIFY_EMAIL = "VERIFY_EMAIL"
     RESET_PASSWORD = "RESET_PASSWORD"  # noqa: S105 - enum label, not a secret

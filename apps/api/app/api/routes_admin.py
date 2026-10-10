@@ -17,7 +17,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.api.auth_context import AdminUser
+from app.api.admin_auth import AdminUser
 from app.api.errors import ApiError
 from app.api.routes_disputes import EvidenceOut, evidence_out, file_response
 from app.db.session import get_db
@@ -171,6 +171,37 @@ def list_disputes(
     return [_summary(d, deal) for d, deal in rows]
 
 
+_CONFLICT = ApiError(
+    403, "conflict_of_interest", "you are a party to this deal; another admin must handle it"
+)
+
+
+def _guard_dispute(db: Session, dispute_id: uuid.UUID, admin_id: uuid.UUID) -> None:
+    """An admin never handles (views, annotates, decides) a dispute on their own deal."""
+    own = db.scalar(
+        select(func.count())
+        .select_from(DealParticipant)
+        .join(Dispute, Dispute.deal_id == DealParticipant.deal_id)
+        .where(Dispute.id == dispute_id, DealParticipant.user_id == admin_id)
+    )
+    db.rollback()  # read-only check; let the caller open its own transaction
+    if own:
+        raise _CONFLICT
+
+
+def _guard_user(db: Session, target_id: uuid.UUID, admin_id: uuid.UUID) -> None:
+    """...nor changes the status of someone they share a deal with."""
+    mine = select(DealParticipant.deal_id).where(DealParticipant.user_id == admin_id)
+    shared = db.scalar(
+        select(func.count())
+        .select_from(DealParticipant)
+        .where(DealParticipant.user_id == target_id, DealParticipant.deal_id.in_(mine))
+    )
+    db.rollback()
+    if shared:
+        raise _CONFLICT
+
+
 def _dispute_detail(db: Session, dispute_id: uuid.UUID) -> AdminDisputeOut:
     row = db.execute(
         select(Dispute, Deal).join(Deal, Deal.id == Dispute.deal_id).where(Dispute.id == dispute_id)
@@ -224,12 +255,14 @@ def _dispute_detail(db: Session, dispute_id: uuid.UUID) -> AdminDisputeOut:
 
 
 @router.get("/disputes/{dispute_id}", response_model=AdminDisputeOut)
-def get_dispute(dispute_id: uuid.UUID, _: AdminUser, db: DbDep) -> AdminDisputeOut:
+def get_dispute(dispute_id: uuid.UUID, ctx: AdminUser, db: DbDep) -> AdminDisputeOut:
+    _guard_dispute(db, dispute_id, ctx.user_id)
     return _dispute_detail(db, dispute_id)
 
 
 @router.get("/disputes/{dispute_id}/evidence/{evidence_id}/file")
-def download(dispute_id: uuid.UUID, evidence_id: uuid.UUID, _: AdminUser, db: DbDep) -> Response:
+def download(dispute_id: uuid.UUID, evidence_id: uuid.UUID, ctx: AdminUser, db: DbDep) -> Response:
+    _guard_dispute(db, dispute_id, ctx.user_id)
     try:
         item = dsvc.load_file(db, dispute_id=dispute_id, evidence_id=evidence_id, user_id=None)
     except dsvc.DisputeNotVisibleError as exc:
@@ -239,6 +272,7 @@ def download(dispute_id: uuid.UUID, evidence_id: uuid.UUID, _: AdminUser, db: Db
 
 @router.post("/disputes/{dispute_id}/notes", response_model=AdminDisputeOut)
 def add_note(dispute_id: uuid.UUID, body: NoteIn, ctx: AdminUser, db: DbDep) -> AdminDisputeOut:
+    _guard_dispute(db, dispute_id, ctx.user_id)
     try:
         with atomic(db):
             db.add(
@@ -259,6 +293,7 @@ def add_note(dispute_id: uuid.UUID, body: NoteIn, ctx: AdminUser, db: DbDep) -> 
 def decide(
     dispute_id: uuid.UUID, body: DecisionIn, ctx: AdminUser, request: Request, db: DbDep
 ) -> AdminDisputeOut:
+    _guard_dispute(db, dispute_id, ctx.user_id)  # also enforced in SQL
     try:
         with atomic(db):
             dt.admin_resolve_dispute(
@@ -297,6 +332,7 @@ def users(_: AdminUser, db: DbDep, q: str = "") -> list[UserOut]:
 
 @router.post("/users/{user_id}/status", status_code=204)
 def set_user_status(user_id: uuid.UUID, body: UserStatusIn, ctx: AdminUser, db: DbDep) -> Response:
+    _guard_user(db, user_id, ctx.user_id)
     try:
         with atomic(db):
             dt.admin_set_user_status(

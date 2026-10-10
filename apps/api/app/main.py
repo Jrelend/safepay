@@ -1,4 +1,6 @@
 import logging
+import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
@@ -16,6 +18,17 @@ from app.db.session import make_engine
 
 REQUEST_ID_HEADER = "X-Request-ID"
 SIMULATION_HEADER = "X-SafePay-Simulation"
+
+
+access_log = logging.getLogger("safepay.access")
+if not logging.getLogger().handlers:  # uvicorn configures only its own loggers
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+_SECRET_SEGMENTS = re.compile(r"(/invites/)[^/]+")
+
+
+def redact_path(path: str) -> str:
+    """Bearer secrets that appear in URL paths are never written to logs."""
+    return _SECRET_SEGMENTS.sub(r"\1[redacted]", path)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -71,7 +84,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request_id = incoming if 0 < len(incoming) <= 64 and incoming.isprintable() else ""
         request_id = request_id or uuid.uuid4().hex
         request.state.request_id = request_id
+        started = time.monotonic()
         response = await call_next(request)
+        # Our own access log: one line per request with secrets redacted (invite
+        # tokens in paths; query strings never logged). Uvicorn's is disabled.
+        access_log.info(
+            "%s %s %s %.0fms rid=%s",
+            request.method,
+            redact_path(request.url.path),
+            response.status_code,
+            (time.monotonic() - started) * 1000,
+            request_id,
+        )
         response.headers[REQUEST_ID_HEADER] = request_id
         response.headers[SIMULATION_HEADER] = "true"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -103,8 +127,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             app.include_router(routes_dev.router)
     else:
-        from app.api import routes_admin  # noqa: PLC0415
+        from app.api import admin_auth, routes_admin  # noqa: PLC0415
 
+        app.include_router(admin_auth.router)
         app.include_router(routes_admin.router)
     return app
 

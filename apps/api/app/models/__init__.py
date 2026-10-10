@@ -1,7 +1,14 @@
 """SQLAlchemy ORM models. Importing this package registers every table on ``Base.metadata``."""
 
 from app.models.audit import AuditEvent
-from app.models.auth import AuthToken, EmailOutbox, RateLimit, TokenPurpose, UserSession
+from app.models.auth import (
+    AdminSession,
+    AuthToken,
+    EmailOutbox,
+    RateLimit,
+    TokenPurpose,
+    UserSession,
+)
 from app.models.base import Base
 from app.models.deal import Deal, DealParticipant, ParticipantRole
 from app.models.deal_transition import DealTransitionRule
@@ -20,6 +27,7 @@ from app.models.user import Admin, User, UserStatus
 
 __all__ = [
     "Admin",
+    "AdminSession",
     "AuditEvent",
     "AuthToken",
     "Base",

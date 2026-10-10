@@ -2,17 +2,22 @@
 owner credential (MIGRATION_DATABASE_URL). The admin API cannot create admins.
 
     python -m app.cli grant-admin someone@example.com --note "ops on-call"
+        (prompts for a separate ADMIN password; prints a TOTP secret once)
+    python -m app.cli reset-admin-credentials someone@example.com
     python -m app.cli revoke-admin someone@example.com
     python -m app.cli set-auto-release off --note "beta policy"   # default: off
     python -m app.cli outbox tester@example.com   # simulated emails (no real email yet)
 """
 
 import argparse
+import getpass
 import sys
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Connection, Engine, create_engine, text
 
+from app.core import totp
 from app.core.config import get_settings
+from app.core.security import WeakPasswordError, check_password_policy, hash_password
 from app.services.accounts import normalize_email
 
 
@@ -23,8 +28,50 @@ def _engine() -> Engine:
     return create_engine(str(url))
 
 
-def grant_admin(email: str, note: str) -> None:
+def _read_admin_password(email: str, from_stdin: bool) -> str:
+    """The admin password is separate from the user's normal password."""
+    if from_stdin:
+        password = sys.stdin.readline().rstrip("\n")
+    else:
+        password = getpass.getpass("New ADMIN password (not the user's login password): ")
+        if getpass.getpass("Repeat: ") != password:
+            sys.exit("passwords do not match")
+    try:
+        check_password_policy(password, email=email)
+    except WeakPasswordError as exc:
+        sys.exit(f"admin password rejected: {exc}")
+    return password
+
+
+def _issue_credentials(conn: Connection, user_id: object, email: str, password: str) -> str:
+    secret = totp.new_secret()
+    conn.execute(
+        text(
+            "UPDATE admins SET password_hash = :h, totp_secret = :s, totp_last_step = 0 "
+            "WHERE user_id = :u"
+        ),
+        {"h": hash_password(password), "s": secret, "u": user_id},
+    )
+    conn.execute(
+        text(
+            "UPDATE admin_sessions SET revoked_at = now() "
+            "WHERE admin_user_id = :u AND revoked_at IS NULL"
+        ),
+        {"u": user_id},
+    )
+    return secret
+
+
+def _print_totp(secret: str, email: str) -> None:
+    # Shown ONCE. Add it to an authenticator app (scan the URI as a QR code or type
+    # the secret), then store nothing else: it cannot be read back later.
+    print(f"TOTP secret: {secret}")
+    print(f"otpauth URI: {totp.provisioning_uri(secret, email)}")
+
+
+def grant_admin(email: str, note: str, *, password_stdin: bool = False) -> None:
     address = normalize_email(email)
+    password = _read_admin_password(address, password_stdin)
     with _engine().begin() as conn:
         user_id = conn.execute(
             text("SELECT id FROM users WHERE email = :e AND email_verified_at IS NOT NULL"),
@@ -36,6 +83,7 @@ def grant_admin(email: str, note: str) -> None:
             text("INSERT INTO admins (user_id, note) VALUES (:u, :n) ON CONFLICT DO NOTHING"),
             {"u": user_id, "n": note[:200]},
         )
+        secret = _issue_credentials(conn, user_id, address, password)
         conn.execute(
             text(
                 "INSERT INTO audit_events (actor_type, action, entity_type, entity_id, data) "
@@ -45,6 +93,32 @@ def grant_admin(email: str, note: str) -> None:
             {"u": user_id, "n": note[:200]},
         )
     print(f"granted admin to {address}")
+    _print_totp(secret, address)
+
+
+def reset_admin_credentials(email: str, *, password_stdin: bool = False) -> None:
+    """New admin password + new TOTP secret; revokes every admin session."""
+    address = normalize_email(email)
+    password = _read_admin_password(address, password_stdin)
+    with _engine().begin() as conn:
+        user_id = conn.execute(
+            text(
+                "SELECT a.user_id FROM admins a JOIN users u ON u.id = a.user_id WHERE u.email = :e"
+            ),
+            {"e": address},
+        ).scalar()
+        if user_id is None:
+            sys.exit("no administrator with that email")
+        secret = _issue_credentials(conn, user_id, address, password)
+        conn.execute(
+            text(
+                "INSERT INTO audit_events (actor_type, action, entity_type, entity_id) "
+                "VALUES ('SYSTEM', 'admin.credentials_reset', 'user', :u)"
+            ),
+            {"u": user_id},
+        )
+    print(f"reset admin credentials for {address}")
+    _print_totp(secret, address)
 
 
 def revoke_admin(email: str) -> None:
@@ -116,6 +190,10 @@ def main() -> None:
     g = sub.add_parser("grant-admin")
     g.add_argument("email")
     g.add_argument("--note", default="")
+    g.add_argument("--password-stdin", action="store_true")
+    c = sub.add_parser("reset-admin-credentials")
+    c.add_argument("email")
+    c.add_argument("--password-stdin", action="store_true")
     r = sub.add_parser("revoke-admin")
     r.add_argument("email")
     a = sub.add_parser("set-auto-release")
@@ -126,7 +204,9 @@ def main() -> None:
     o.add_argument("--limit", type=int, default=5)
     args = parser.parse_args()
     if args.command == "grant-admin":
-        grant_admin(args.email, args.note)
+        grant_admin(args.email, args.note, password_stdin=args.password_stdin)
+    elif args.command == "reset-admin-credentials":
+        reset_admin_credentials(args.email, password_stdin=args.password_stdin)
     elif args.command == "revoke-admin":
         revoke_admin(args.email)
     elif args.command == "set-auto-release":

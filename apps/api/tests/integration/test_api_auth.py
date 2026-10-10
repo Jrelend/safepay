@@ -11,6 +11,7 @@ from tests.integration.web import (
     ORIGIN,
     PASSWORD,
     Browser,
+    admin_login,
     grant_admin,
     latest_link,
     make_settings,
@@ -264,10 +265,9 @@ def test_suspension_revokes_sessions_and_blocks_login(
     public = Browser(make_settings(app_url, "public"))
     user = Browser(make_settings(app_url, "public"))
     admin_email = signup(public, engine, name="Админ")
-    grant_admin(engine, admin_email)
+    secret = grant_admin(engine, admin_email)
     target = signup(user, engine)
-    admin = Browser(make_settings(admin_role_url, "admin"))
-    admin.client.cookies.update(dict(public.client.cookies))
+    admin = admin_login(make_settings(admin_role_url, "admin"), engine, admin_email, secret)
     uid = user_id(engine, target)
     no_reason = admin.post(f"/admin/users/{uid}/status", json={"status": "SUSPENDED", "reason": ""})
     assert no_reason.status_code == 422

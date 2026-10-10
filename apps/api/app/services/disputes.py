@@ -11,11 +11,16 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, undefer
 
 from app.models import Deal, DealParticipant, Dispute, DisputeEvidence, EvidenceKind
-from app.models.dispute import MAX_EVIDENCE_BYTES, MAX_EVIDENCE_TEXT
+from app.models.dispute import (
+    MAX_EVIDENCE_BYTES,
+    MAX_EVIDENCE_TEXT,
+    MAX_FILES_PER_PARTY,
+    MAX_STATEMENTS_PER_PARTY,
+)
 
 _SIGNATURES: tuple[tuple[bytes, str], ...] = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
@@ -69,6 +74,27 @@ def view(db: Session, *, dispute_id: uuid.UUID, user_id: uuid.UUID) -> DisputeVi
     return DisputeView(dispute, db.get_one(Deal, dispute.deal_id), evidence)
 
 
+def _count(db: Session, dispute_id: uuid.UUID, user_id: uuid.UUID, kind: EvidenceKind) -> int:
+    # Serialize this party's additions to this dispute (transaction-scoped advisory
+    # lock: the app role has no UPDATE on disputes, so it cannot row-lock them).
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"evidence:{dispute_id}:{user_id}"},
+    )
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(DisputeEvidence)
+            .where(
+                DisputeEvidence.dispute_id == dispute_id,
+                DisputeEvidence.author_user_id == user_id,
+                DisputeEvidence.kind == kind,
+            )
+        )
+        or 0
+    )
+
+
 def add_statement(
     db: Session, *, dispute_id: uuid.UUID, user_id: uuid.UUID, body: str
 ) -> DisputeEvidence:
@@ -76,6 +102,8 @@ def add_statement(
     body = body.strip()
     if not 1 <= len(body) <= MAX_EVIDENCE_TEXT:
         raise EvidenceRejectedError("invalid_statement")
+    if _count(db, dispute_id, user_id, EvidenceKind.STATEMENT) >= MAX_STATEMENTS_PER_PARTY:
+        raise EvidenceRejectedError("evidence_limit")
     item = DisputeEvidence(
         dispute_id=dispute_id, author_user_id=user_id, kind=EvidenceKind.STATEMENT, body=body
     )
@@ -109,6 +137,8 @@ def add_file(
     _visible_dispute(db, dispute_id, user_id)
     if not 0 < len(data) <= MAX_EVIDENCE_BYTES:
         raise EvidenceRejectedError("file_too_large" if data else "empty_file")
+    if _count(db, dispute_id, user_id, EvidenceKind.FILE) >= MAX_FILES_PER_PARTY:
+        raise EvidenceRejectedError("evidence_limit")
     item = DisputeEvidence(
         dispute_id=dispute_id,
         author_user_id=user_id,

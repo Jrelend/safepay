@@ -58,7 +58,7 @@ def _scalar(engine: Engine, sql: str) -> object:
 
 def test_new_database_initializes_with_correct_ownership(fresh_db: Engine) -> None:
     command.upgrade(_alembic(), "head")
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0004"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0005"
     assert (
         _scalar(
             fresh_db,
@@ -125,7 +125,7 @@ def test_downgrade_refuses_to_destroy_data(fresh_db: Engine) -> None:
     with pytest.raises(Exception, match="refusing to downgrade"):
         command.downgrade(_alembic(), "base")
     assert _scalar(fresh_db, "SELECT count(*) FROM users") == 1
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") in ("0003", "0004")
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") in ("0003", "0004", "0005")
     # Explicit, deliberate opt-in still works (after a backup).
     command.downgrade(_alembic("allow_data_loss=true"), "base")
     assert _scalar(fresh_db, "SELECT to_regclass('public.users') IS NULL") is True
@@ -195,6 +195,6 @@ def test_downgrade_below_0004_refuses_while_deals_are_delivered(fresh_db: Engine
         )
     with pytest.raises(Exception, match="re-enable time-based automatic"):
         command.downgrade(_alembic(), "0003")
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0004"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") in ("0004", "0005")
     command.downgrade(_alembic("allow_data_loss=true"), "0003")
     assert _scalar(fresh_db, "SELECT to_regclass('public.platform_policy') IS NULL") is True

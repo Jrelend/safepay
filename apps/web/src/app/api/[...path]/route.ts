@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import {
   MAX_BODY_BYTES,
   downstreamResponseHeaders,
+  readCapped,
   resolveUpstream,
   upstreamRequestHeaders,
 } from "@/lib/proxy";
@@ -11,6 +12,7 @@ function env() {
   return {
     publicUrl: process.env.API_INTERNAL_URL ?? "http://localhost:8000",
     adminUrl: process.env.ADMIN_API_INTERNAL_URL,
+    devRoutes: process.env.ENABLE_DEV_ROUTES === "true",
   };
 }
 
@@ -23,12 +25,13 @@ async function forward(req: NextRequest, ctx: RouteContext<"/api/[...path]">): P
   const target = resolveUpstream(path, env());
   if (!target) return problem(404, "not_found", "not found");
 
-  let body: ArrayBuffer | undefined;
+  let body: Uint8Array<ArrayBuffer> | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
     const declared = Number(req.headers.get("content-length") ?? "0");
     if (declared > MAX_BODY_BYTES) return problem(413, "payload_too_large", "request too large");
-    body = await req.arrayBuffer();
-    if (body.byteLength > MAX_BODY_BYTES) return problem(413, "payload_too_large", "request too large");
+    const read = await readCapped(req.body, MAX_BODY_BYTES);
+    if (read === null) return problem(413, "payload_too_large", "request too large");
+    body = read as Uint8Array<ArrayBuffer>;
   }
 
   const url = `${target.base}${target.path}${req.nextUrl.search}`;

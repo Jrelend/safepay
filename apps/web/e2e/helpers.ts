@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -68,12 +69,47 @@ export function resetRateLimits(): void {
   });
 }
 
-export function grantAdmin(email: string): void {
-  execFileSync("uv", ["run", "python", "-m", "app.cli", "grant-admin", email], {
-    cwd: API_DIR,
-    env: process.env,
-    stdio: "pipe",
-  });
+export const ADMIN_PASSWORD = "Separate-Admin-Secret-77";
+
+/** Grant admin via the real owner CLI; returns the TOTP secret it prints once. */
+export function grantAdmin(email: string): string {
+  const out = execFileSync(
+    "uv",
+    ["run", "python", "-m", "app.cli", "grant-admin", email, "--password-stdin"],
+    { cwd: API_DIR, env: process.env, input: `${ADMIN_PASSWORD}\n`, encoding: "utf8" },
+  );
+  const secret = /TOTP secret: ([A-Z2-7]+)/.exec(out)?.[1];
+  if (!secret) throw new Error(`no TOTP secret in CLI output: ${out}`);
+  return secret;
+}
+
+function base32(secret: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const ch of secret.replace(/=+$/, "")) bits += alphabet.indexOf(ch).toString(2).padStart(5, "0");
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+
+/** RFC 6238 TOTP (SHA-1, 6 digits, 30 s) — what an authenticator app shows. */
+export function totp(secret: string, offsetSteps = 0): string {
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30_000) + offsetSteps));
+  const digest = createHmac("sha1", base32(secret)).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const value = digest.readUInt32BE(offset) & 0x7fffffff;
+  return String(value % 1_000_000).padStart(6, "0");
+}
+
+/** Sign in to the ADMIN area (separate admin password + one-time code). */
+export async function adminSignIn(page: Page, email: string, secret: string): Promise<void> {
+  await page.goto("/admin/login");
+  await page.getByLabel("Имэйл").fill(email);
+  await page.getByLabel("Админ нууц үг").fill(ADMIN_PASSWORD);
+  await page.getByLabel("Баталгаажуулах код").fill(totp(secret));
+  await page.getByRole("button", { name: "Нэвтрэх" }).click();
+  await expect(page.getByText("Админ самбар")).toBeVisible();
 }
 
 export async function createDeal(page: Page, title: string, amount: string): Promise<{ dealUrl: string; invite: string }> {

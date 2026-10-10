@@ -114,14 +114,6 @@ def require_verified_user(ctx: Annotated[AuthContext, Depends(require_user)]) ->
     return ctx
 
 
-def require_admin(ctx: Annotated[AuthContext, Depends(require_user)]) -> AuthContext:
-    # Re-checked inside every admin DB function against the admins table.
-    if not ctx.is_admin:
-        raise ApiError(403, "not_admin", "administrator access required")
-    return ctx
-
-
 CurrentUser = Annotated[AuthContext, Depends(require_user)]
 VerifiedUser = Annotated[AuthContext, Depends(require_verified_user)]
-AdminUser = Annotated[AuthContext, Depends(require_admin)]
 MaybeUser = Annotated[AuthContext | None, Depends(optional_user)]

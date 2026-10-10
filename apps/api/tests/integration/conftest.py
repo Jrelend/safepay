@@ -257,3 +257,11 @@ def make_account(
 def add_participant(session: Session, deal: Deal, user: User, role: ParticipantRole) -> None:
     session.add(DealParticipant(deal_id=deal.id, user_id=user.id, role=role))
     session.flush()
+
+
+@pytest.fixture(autouse=True)
+def _close_test_apps() -> Iterator[None]:
+    yield
+    from tests.integration.web import close_all  # noqa: PLC0415
+
+    close_all()

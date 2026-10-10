@@ -35,7 +35,7 @@ export type Upstream = { base: string; path: string };
 
 export function resolveUpstream(
   segments: readonly string[],
-  env: { publicUrl: string; adminUrl: string | undefined },
+  env: { publicUrl: string; adminUrl: string | undefined; devRoutes?: boolean },
 ): Upstream | null {
   if (segments.length === 0 || segments.length > 8) return null;
   if (!segments.every((s) => SEGMENT.test(s) && s !== "." && s !== "..")) return null;
@@ -45,6 +45,8 @@ export function resolveUpstream(
   }
   // Operational endpoints are not part of the browser API surface.
   if (["health", "ready", "docs", "openapi.json", "redoc"].includes(segments[0])) return null;
+  // Local-development helpers (simulated mailbox) only when explicitly enabled.
+  if (segments[0] === "dev" && !env.devRoutes) return null;
   return { base: env.publicUrl, path };
 }
 
@@ -71,6 +73,37 @@ export function upstreamRequestHeaders(incoming: Headers): Headers {
   }
   const ip = clientAddress(incoming.get("x-forwarded-for"));
   if (ip) out.set("x-forwarded-for", ip);
+  return out;
+}
+
+/**
+ * Read a request body, aborting as soon as it exceeds ``max`` bytes. Works for
+ * chunked uploads too (no Content-Length), so the cap can't be bypassed.
+ */
+export async function readCapped(
+  body: ReadableStream<Uint8Array> | null,
+  max: number,
+): Promise<Uint8Array | null> {
+  if (!body) return new Uint8Array();
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
   return out;
 }
 
