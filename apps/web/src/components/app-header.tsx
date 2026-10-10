@@ -9,7 +9,7 @@ export function AppHeader() {
   const session = useSession();
   return (
     <header className="bg-surface/95 border-border sticky top-0 z-20 border-b backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-md items-center justify-between px-4">
+      <div className="mx-auto flex h-14 max-w-md md:max-w-2xl items-center justify-between px-4">
         <Link
           href={session.status === "authenticated" ? "/dashboard" : "/"}
           className="flex items-center gap-2 font-semibold"

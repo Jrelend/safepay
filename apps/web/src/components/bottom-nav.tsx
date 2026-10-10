@@ -36,7 +36,7 @@ export function BottomNav() {
       aria-label="Үндсэн цэс"
       className="bg-surface/95 border-border fixed inset-x-0 bottom-0 z-20 border-t pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
-      <ul className="mx-auto flex max-w-md">
+      <ul className="mx-auto flex max-w-md md:max-w-2xl">
         {ITEMS.map((item) => {
           const active = isActive(pathname, item.href);
           return (

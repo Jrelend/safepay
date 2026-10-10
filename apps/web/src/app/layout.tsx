@@ -37,7 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <SessionProvider>
           <SimulationBanner />
           <AppHeader />
-          <main id="main" className="mx-auto w-full max-w-md flex-1 px-4 pt-6 pb-28">
+          <main id="main" className="mx-auto w-full max-w-md md:max-w-2xl flex-1 px-4 pt-6 pb-28">
             {children}
           </main>
           <footer className="text-muted pb-24 text-center text-xs">{mn.footer}</footer>
