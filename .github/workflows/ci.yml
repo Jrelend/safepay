@@ -168,6 +168,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cp .env.example .env
+      - name: Pre-pull base images (retry on registry rate limits)
+        run: |
+          for img in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/python:3.13-slim \
+                     public.ecr.aws/docker/library/node:22-alpine; do
+            for attempt in 1 2 3 4 5; do
+              docker pull -q "$img" && break
+              [ "$attempt" = 5 ] && exit 1
+              sleep $((attempt * 15))
+            done
+          done
       - name: Validate compose files
         run: |
           docker compose config -q
@@ -181,7 +191,7 @@ jobs:
           psql() { docker compose exec -T db psql -U postgres -d safepay -v ON_ERROR_STOP=1 -At "$@"; }
           docker compose exec -T db pg_isready -h 127.0.0.1 -U postgres -d safepay
           test "$(docker compose ps -a migrate --format '{{.State}} {{.ExitCode}}')" = "exited 0"
-          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0003
+          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0005
           psql -c "SHOW server_version_num" | grep -q '^17'
           # Roles exist, are not superusers, and the migrator owns everything.
           test "$(psql -c "SELECT string_agg(rolname || ':' || rolsuper, ',' ORDER BY rolname) FROM pg_roles WHERE rolname LIKE 'safepay_%'")" = "safepay_admin:false,safepay_app:false,safepay_migrator:false,safepay_system:false"
@@ -248,6 +258,16 @@ jobs:
       ORIGIN: https://safepay.test
     steps:
       - uses: actions/checkout@v5
+      - name: Pre-pull base images (retry on registry rate limits)
+        run: |
+          for img in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/python:3.13-slim \
+                     public.ecr.aws/docker/library/node:22-alpine public.ecr.aws/docker/library/caddy:2-alpine; do
+            for attempt in 1 2 3 4 5; do
+              docker pull -q "$img" && break
+              [ "$attempt" = 5 ] && exit 1
+              sleep $((attempt * 15))
+            done
+          done
       - name: Lint staging scripts
         run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh
       - name: Validate staging compose with the example env
