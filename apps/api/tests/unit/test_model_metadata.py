@@ -5,6 +5,7 @@ from sqlalchemy import BigInteger
 from app.models import Base
 
 EXPECTED_TABLES = {
+    "admin_sessions",
     "users",
     "deals",
     "deal_participants",
@@ -14,6 +15,15 @@ EXPECTED_TABLES = {
     "audit_events",
     "deal_transitions",
     "idempotency_records",
+    "admins",
+    "sessions",
+    "auth_tokens",
+    "email_outbox",
+    "platform_policy",
+    "rate_limits",
+    "disputes",
+    "dispute_evidence",
+    "notifications",
 }
 
 

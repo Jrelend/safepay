@@ -17,10 +17,17 @@ C = EntryDirection.CREDIT
 
 
 def _escrow_setup(session: Session) -> tuple[LedgerAccount, LedgerAccount]:
-    """Return (buyer wallet, deal escrow) accounts, committed."""
+    """Return (simulated cash, deal escrow) accounts, committed.
+
+    Postings start from the SIMULATED_CASH asset: user wallets and escrow can
+    never go negative (deferred DB check), so they cannot be the debit source.
+    """
     buyer = make_user(session)
     deal = make_deal(session, buyer)
-    wallet = make_account(session, AccountPurpose.USER_WALLET, AccountType.LIABILITY, owner=buyer)
+    make_account(session, AccountPurpose.USER_WALLET, AccountType.LIABILITY, owner=buyer)
+    wallet = session.scalars(
+        select(LedgerAccount).where(LedgerAccount.purpose == AccountPurpose.SIMULATED_CASH)
+    ).one()
     escrow = make_account(session, AccountPurpose.DEAL_ESCROW, AccountType.LIABILITY, deal=deal)
     session.commit()
     return wallet, escrow
@@ -56,7 +63,6 @@ def test_balanced_transaction_commits_and_balance_is_derived(session: Session) -
     _post(session, [(wallet, D, 150_000), (escrow, C, 150_000)])
     session.commit()
     assert _balance(session, escrow) == 150_000
-    assert _balance(session, wallet) == -150_000
 
 
 def test_unbalanced_transaction_is_rejected_at_commit(session: Session) -> None:
@@ -140,6 +146,13 @@ def test_account_purpose_must_match_type(session: Session) -> None:
     user = make_user(session)
     with pytest.raises(IntegrityError, match="purpose_matches_type"):
         make_account(session, AccountPurpose.USER_WALLET, AccountType.ASSET, owner=user)
+
+
+def test_escrow_cannot_go_negative(session: Session) -> None:
+    cash, escrow = _escrow_setup(session)
+    _post(session, [(escrow, D, 500), (cash, C, 500)])
+    with pytest.raises(DBAPIError, match="negative balance"):
+        session.commit()
 
 
 def test_one_wallet_per_user(session: Session) -> None:

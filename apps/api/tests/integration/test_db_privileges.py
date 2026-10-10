@@ -128,7 +128,7 @@ ESCALATION = {
         "LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$"
     ),
     "make_function_invoker": (
-        "ALTER FUNCTION safepay_transition_deal(uuid, text, text, uuid, integer, text) "
+        "ALTER FUNCTION safepay_transition_deal(uuid, text, uuid, integer, text, text) "
         "SECURITY INVOKER"
     ),
     "create_table": "CREATE TABLE evil (id int)",
@@ -167,7 +167,7 @@ ESCALATION = {
     "comment_ledger": "COMMENT ON TABLE ledger_entries IS 'x'",
     "replace_transition_fn": (
         "CREATE OR REPLACE FUNCTION safepay_transition_deal("
-        "uuid, text, text, uuid, integer, text) RETURNS jsonb "
+        "uuid, text, uuid, integer, text, text) RETURNS jsonb "
         "LANGUAGE sql AS 'SELECT NULL::jsonb'"
     ),
 }

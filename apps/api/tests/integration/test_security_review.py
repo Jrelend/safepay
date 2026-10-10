@@ -78,7 +78,7 @@ def test_temp_table_cannot_shadow_ledger_balance_check(engine: Engine) -> None:
         user = make_user(s)
         deal = make_deal(s, user)
         s.commit()
-        user_id, deal_id = user.id, deal.id
+        deal_id = deal.id
     with engine.connect() as conn:
         # A fake, perfectly balanced ledger_entries in pg_temp...
         conn.execute(
@@ -88,11 +88,7 @@ def test_temp_table_cannot_shadow_ledger_balance_check(engine: Engine) -> None:
             )
         )
         wallet = conn.execute(
-            text(
-                "INSERT INTO ledger_accounts (code, account_type, purpose, owner_user_id) "
-                "VALUES (:c, 'LIABILITY', 'USER_WALLET', :u) RETURNING id"
-            ),
-            {"c": f"WALLET:probe-{uuid.uuid4()}", "u": user_id},
+            text("SELECT id FROM ledger_accounts WHERE purpose = 'SIMULATED_CASH'")
         ).scalar_one()
         escrow = conn.execute(
             text(
@@ -239,7 +235,7 @@ def test_concurrent_payouts_to_one_seller_share_one_wallet(
         scenarios = []
         for _ in range(2):
             buyer = make_user(s)
-            deal = make_deal(s, buyer, amount_mnt=70_000)
+            deal = make_deal(s, seller, amount_mnt=70_000)
             add_participant(s, deal, buyer, ParticipantRole.BUYER)
             add_participant(s, deal, seller, ParticipantRole.SELLER)
             scenarios.append(Scenario(deal.id, buyer.id, seller.id, 70_000))

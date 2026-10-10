@@ -27,7 +27,7 @@ any status change that is not an edge in this table, for every role. See
 | FUNDED | REFUND | REFUNDED | seller, admin | **refund to buyer** |
 | FUNDED | OPEN_DISPUTE | DISPUTED | buyer, seller | – |
 | DELIVERED | CONFIRM_RECEIPT | COMPLETED | buyer | **release to seller** |
-| DELIVERED | AUTO_RELEASE | COMPLETED | system (after the inspection window) | **release to seller** |
+| DELIVERED | AUTO_RELEASE | COMPLETED | system (after the inspection window) — **disabled in Beta v0.1** (refused in SQL while `platform_policy.auto_release_enabled` is false) | **release to seller** |
 | DELIVERED | OPEN_DISPUTE | DISPUTED | buyer, seller | – |
 | DELIVERED | REFUND | REFUNDED | seller, admin | **refund to buyer** |
 | DISPUTED | RESOLVE_RELEASE | COMPLETED | admin | **release to seller** |
@@ -50,7 +50,7 @@ stateDiagram-v2
     FUNDED --> DELIVERED: MARK_DELIVERED
     FUNDED --> REFUNDED: REFUND
     FUNDED --> DISPUTED: OPEN_DISPUTE
-    DELIVERED --> COMPLETED: CONFIRM_RECEIPT / AUTO_RELEASE
+    DELIVERED --> COMPLETED: CONFIRM_RECEIPT (AUTO_RELEASE disabled in Beta)
     DELIVERED --> DISPUTED: OPEN_DISPUTE
     DELIVERED --> REFUNDED: REFUND
     DISPUTED --> COMPLETED: RESOLVE_RELEASE
@@ -72,6 +72,24 @@ Properties verified by `tests/unit/test_deal_states.py`:
 Open design questions for Phase 1 and later (not implemented): who may `SUBMIT` vs.
 `ACCEPT` (initiator vs. counterparty), the inspection-window length for
 `AUTO_RELEASE`, partial refunds and split dispute outcomes, and fees.
+
+## Release safety (Beta v0.1)
+
+An expired inspection window **never** releases escrow by itself. Funds leave
+escrow only through:
+
+* the buyer's `CONFIRM_RECEIPT` (release to seller);
+* the seller's `REFUND` (back to buyer);
+* an admin decision on a dispute (`RESOLVE_RELEASE` / `RESOLVE_REFUND`), or an admin
+  `REFUND`.
+
+If the buyer goes silent after delivery, the seller opens a dispute and an admin
+decides. While a dispute is open nothing can release or refund except the admin
+decision, and release and refund are mutually exclusive (one settlement per deal,
+enforced by a partial unique index). Automatic release can be turned on in a later
+version only by the schema owner (`python -m app.cli set-auto-release on`, audited);
+even then the SQL function re-checks that the deal is DELIVERED and the window has
+ended. Regression tests: `tests/integration/test_release_safety.py`.
 
 ## Mongolian labels (UI)
 

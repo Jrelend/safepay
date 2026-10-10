@@ -1,0 +1,197 @@
+# SafePay Beta — PRIVATE STAGING stack (production-like, SIMULATION ONLY).
+#
+#   scripts/staging-init-secrets.sh            # once: creates .env.staging (chmod 600)
+#   docker compose -f compose.staging.yaml --env-file .env.staging up -d --build
+#
+# Only `caddy` publishes ports (80 -> HTTPS redirect, 443). PostgreSQL, the public
+# API, the admin API, the worker and the web server are reachable only on internal
+# Docker networks; the database network has no internet access at all.
+# See docs/STAGING.md. Do NOT put real money, real payment keys or real customer
+# data into this environment.
+name: safepay-staging
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  logging: *logging
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+x-api-env: &api-env
+  APP_ENV: staging
+  PAYMENTS_SIMULATION_ONLY: "true"
+  PAYMENT_MODE: simulation
+  PUBLIC_WEB_URL: https://${STAGING_DOMAIN:?set STAGING_DOMAIN}
+  CORS_ALLOWED_ORIGINS: '["https://${STAGING_DOMAIN}"]'
+  COOKIE_SECURE: "true"
+  TRUST_PROXY_HEADERS: "true"
+  DEV_MAILBOX_ENABLED: "false"
+
+services:
+  db:
+    <<: *hardening
+    image: ${POSTGRES_IMAGE:-public.ecr.aws/docker/library/postgres:17-alpine}
+    # The official entrypoint needs these to initialise and run as `postgres`.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-safepay}
+      SAFEPAY_MIGRATOR_PASSWORD: ${SAFEPAY_MIGRATOR_PASSWORD:?set SAFEPAY_MIGRATOR_PASSWORD}
+      SAFEPAY_APP_PASSWORD: ${SAFEPAY_APP_PASSWORD:?set SAFEPAY_APP_PASSWORD}
+      SAFEPAY_SYSTEM_PASSWORD: ${SAFEPAY_SYSTEM_PASSWORD:?set SAFEPAY_SYSTEM_PASSWORD}
+      SAFEPAY_ADMIN_PASSWORD: ${SAFEPAY_ADMIN_PASSWORD:?set SAFEPAY_ADMIN_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ./infra/postgres/bootstrap-roles.sql:/safepay/bootstrap-roles.sql:ro
+    shm_size: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1g }
+    networks: [backend]
+
+  migrate:
+    <<: *hardening
+    build: ./apps/api
+    image: safepay-api:staging
+    restart: "no"
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *api-env
+      MIGRATION_DATABASE_URL: postgresql+psycopg://safepay_migrator:${SAFEPAY_MIGRATOR_PASSWORD}@db:5432/${POSTGRES_DB:-safepay}
+    depends_on:
+      db: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+    networks: [backend]
+
+  api:
+    <<: *hardening
+    image: safepay-api:staging
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--workers", "2"]
+    environment:
+      <<: *api-env
+      API_MODE: public
+      DATABASE_URL: postgresql+psycopg://safepay_app:${SAFEPAY_APP_PASSWORD}@db:5432/${POSTGRES_DB:-safepay}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+    networks: [backend, frontend]
+
+  admin-api:
+    <<: *hardening
+    image: safepay-api:staging
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      <<: *api-env
+      API_MODE: admin
+      DATABASE_URL: postgresql+psycopg://safepay_admin:${SAFEPAY_ADMIN_PASSWORD}@db:5432/${POSTGRES_DB:-safepay}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m }
+    networks: [backend, frontend]
+
+  worker:
+    <<: *hardening
+    image: safepay-api:staging
+    read_only: true
+    tmpfs: ["/tmp:mode=1777"]
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *api-env
+      SYSTEM_DATABASE_URL: postgresql+psycopg://safepay_system:${SAFEPAY_SYSTEM_PASSWORD}@db:5432/${POSTGRES_DB:-safepay}
+      WORKER_INTERVAL_SECONDS: "60"
+      # Beta v0.1: never release escrow automatically (the DB refuses it anyway).
+      WORKER_AUTO_RELEASE: "false"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 192m }
+    networks: [backend]
+
+  web:
+    <<: *hardening
+    build: ./apps/web
+    image: safepay-web:staging
+    read_only: true
+    tmpfs: ["/tmp:mode=1777", "/app/.next/cache:mode=1777"]
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      ADMIN_API_INTERNAL_URL: http://admin-api:8000
+      ENABLE_DEV_ROUTES: "false"
+      NODE_ENV: production
+    depends_on:
+      api: { condition: service_healthy }
+      admin-api: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512m }
+    networks: [frontend]
+
+  caddy:
+    <<: *hardening
+    image: ${CADDY_IMAGE:-public.ecr.aws/docker/library/caddy:2-alpine}
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "${STAGING_BIND:-0.0.0.0}:80:80"
+      - "${STAGING_BIND:-0.0.0.0}:443:443"
+    environment:
+      STAGING_DOMAIN: ${STAGING_DOMAIN}
+      CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS (internal, or your ACME email)}
+      ALLOWED_IPS: ${ALLOWED_IPS:?set ALLOWED_IPS (space-separated CIDRs)}
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:?set ADMIN_ALLOWED_IPS (space-separated CIDRs)}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?set BASIC_AUTH_USER}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?set BASIC_AUTH_HASH (caddy hash-password)}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128m }
+    networks: [edge, frontend]
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge: {}
+  # No route to the internet: only caddy (edge) talks to the outside world.
+  frontend:
+    internal: true
+  backend:
+    internal: true

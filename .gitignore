@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.staging.example
 
 # Python
 __pycache__/
@@ -24,3 +25,7 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+.e2e-logs/
+
+.env.staging
+backups/

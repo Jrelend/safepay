@@ -21,7 +21,8 @@ jobs:
         working-directory: apps/api
     services:
       postgres:
-        image: postgres:17-alpine
+        # Official Docker Library image via ECR Public (avoids Docker Hub pull rate limits).
+        image: public.ecr.aws/docker/library/postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci-superuser-password
@@ -42,6 +43,8 @@ jobs:
       TEST_DATABASE_URL: postgresql+psycopg://postgres:ci-superuser-password@localhost:5432/safepay_test
       TEST_MIGRATOR_PASSWORD: ci-migrator-password
       TEST_APP_PASSWORD: ci-app-password
+      TEST_SYSTEM_PASSWORD: ci-system-password
+      TEST_ADMIN_PASSWORD: ci-admin-password
       REQUIRE_INTEGRATION_TESTS: "1"
     steps:
       - uses: actions/checkout@v5
@@ -60,6 +63,7 @@ jobs:
           psql -d safepay -v ON_ERROR_STOP=1 -c "CREATE DATABASE safepay_test"
           psql -d safepay -v ON_ERROR_STOP=1 -v dbname=safepay \
             -v migrator_password=ci-migrator-password -v app_password=ci-app-password \
+            -v system_password=ci-system-password -v admin_password=ci-admin-password \
             -f ../../infra/postgres/bootstrap-roles.sql
       - name: Migrations refuse the superuser
         run: |
@@ -100,6 +104,63 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
+  e2e:
+    name: Browser E2E (Playwright, real API + PostgreSQL roles)
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    services:
+      postgres:
+        # Official Docker Library image via ECR Public (avoids Docker Hub pull rate limits).
+        image: public.ecr.aws/docker/library/postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-superuser-password
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: ci-superuser-password
+      E2E_DB: safepay_e2e
+      E2E_SCREENSHOT_DIR: ${{ github.workspace }}/e2e-screenshots
+      MIGRATION_DATABASE_URL: postgresql+psycopg://safepay_migrator:e2e-migrator-password@localhost:5432/safepay_e2e
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: uv sync --locked
+        working-directory: apps/api
+      - run: npm ci && npm run build
+        working-directory: apps/web
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - name: Start stack (public API, admin API, web)
+        run: ./scripts/e2e-stack.sh
+      - name: Playwright
+        run: npx playwright test
+        working-directory: apps/web
+      - name: Server logs on failure
+        if: failure()
+        run: tail -n 200 .e2e-logs/*.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots-and-traces
+          path: |
+            e2e-screenshots
+            apps/web/test-results
+          if-no-files-found: ignore
+
   compose:
     name: Docker Compose smoke test
     runs-on: ubuntu-latest
@@ -107,6 +168,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cp .env.example .env
+      - name: Pre-pull base images (retry on registry rate limits)
+        run: |
+          for img in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/python:3.13-slim \
+                     public.ecr.aws/docker/library/node:22-alpine; do
+            for attempt in 1 2 3 4 5; do
+              docker pull -q "$img" && break
+              [ "$attempt" = 5 ] && exit 1
+              sleep $((attempt * 15))
+            done
+          done
       - name: Validate compose files
         run: |
           docker compose config -q
@@ -120,10 +191,10 @@ jobs:
           psql() { docker compose exec -T db psql -U postgres -d safepay -v ON_ERROR_STOP=1 -At "$@"; }
           docker compose exec -T db pg_isready -h 127.0.0.1 -U postgres -d safepay
           test "$(docker compose ps -a migrate --format '{{.State}} {{.ExitCode}}')" = "exited 0"
-          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0002
+          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0005
           psql -c "SHOW server_version_num" | grep -q '^17'
           # Roles exist, are not superusers, and the migrator owns everything.
-          test "$(psql -c "SELECT string_agg(rolname || ':' || rolsuper, ',' ORDER BY rolname) FROM pg_roles WHERE rolname LIKE 'safepay_%'")" = "safepay_app:false,safepay_migrator:false"
+          test "$(psql -c "SELECT string_agg(rolname || ':' || rolsuper, ',' ORDER BY rolname) FROM pg_roles WHERE rolname LIKE 'safepay_%'")" = "safepay_admin:false,safepay_app:false,safepay_migrator:false,safepay_system:false"
           test "$(psql -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tableowner <> 'safepay_migrator'")" = "0"
       - name: App role cannot tamper with the ledger (live stack)
         run: |
@@ -141,6 +212,20 @@ jobs:
           done
         env:
           SAFEPAY_APP_PASSWORD: local-app-password-change-me
+      - name: Each service runs as its own role
+        run: |
+          test "$(docker compose ps worker --format '{{.State}}')" = "running"
+          test "$(docker compose ps admin-api --format '{{.Health}}')" = "healthy"
+          docker compose exec -T admin-api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/ready').read().decode())" | grep -q '"status":"ready"'
+          # Each service connects as exactly its own role (deterministic: ask the DB who we are).
+          role_of() { docker compose exec -T "$1" python -c "import os, sqlalchemy as s; print(s.create_engine(os.environ['$2']).connect().execute(s.text('SELECT current_user')).scalar())"; }
+          test "$(role_of api DATABASE_URL)" = "safepay_app"
+          test "$(role_of admin-api DATABASE_URL)" = "safepay_admin"
+          test "$(role_of worker SYSTEM_DATABASE_URL)" = "safepay_system"
+          # The public API must not serve admin routes, and must hold no admin/system credential.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/admin/overview)" = "404"
+          if docker compose exec -T api env | grep -Eq 'SAFEPAY_(ADMIN|SYSTEM)|safepay_(admin|system)'; then echo "api holds privileged credentials"; exit 1; fi
+          docker compose run --rm --no-deps worker python -m app.worker --once
       - name: Smoke test API and web
         run: |
           curl -fsS http://127.0.0.1:8000/health | tee /dev/stderr | grep -q '"simulation_only":true'
@@ -152,9 +237,122 @@ jobs:
           grep -q 'SafePay API v0.1.0' status.html
           test "$(grep -o 'Хэвийн' status.html | wc -l)" -ge 3
           if grep -q 'Ажиллахгүй байна' status.html; then echo 'status page reports a failing check'; exit 1; fi
+          # Browser API path: web origin -> /api proxy -> public / admin API.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/auth/me)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/admin/overview)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}' http://127.0.0.1:3000/api/auth/login)" = "403"
       - name: Logs on failure
         if: failure()
         run: docker compose logs --no-color
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  staging:
+    name: Staging stack (HTTPS proxy, isolation, backup/restore)
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    env:
+      STAGING_DOMAIN: safepay.test
+      ORIGIN: https://safepay.test
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pre-pull base images (retry on registry rate limits)
+        run: |
+          for img in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/python:3.13-slim \
+                     public.ecr.aws/docker/library/node:22-alpine public.ecr.aws/docker/library/caddy:2-alpine; do
+            for attempt in 1 2 3 4 5; do
+              docker pull -q "$img" && break
+              [ "$attempt" = 5 ] && exit 1
+              sleep $((attempt * 15))
+            done
+          done
+      - name: Lint staging scripts
+        run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh
+      - name: Validate staging compose with the example env
+        run: docker compose -f compose.staging.yaml --env-file .env.staging.example config -q
+      - name: Generate secrets (as an operator would)
+        run: |
+          scripts/staging-init-secrets.sh "$STAGING_DOMAIN" | grep -v password
+          test "$(stat -c %a .env.staging)" = "600"
+          # CI runner reaches Caddy via the Docker gateway, so allow it everywhere.
+          sed -i 's|^ADMIN_ALLOWED_IPS=.*|ADMIN_ALLOWED_IPS="0.0.0.0/0 ::/0"|' .env.staging
+          grep -Eq '^[^#]*CHANGE_ME' .env.staging && exit 1 || true
+      - name: Start the staging stack
+        run: |
+          docker compose -f compose.staging.yaml --env-file .env.staging up -d --build
+          scripts/staging-wait.sh
+      - name: Only the HTTPS proxy is published
+        run: |
+          dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
+          for svc in db migrate api admin-api worker web; do
+            test -z "$(dc port "$svc" 5432 2>/dev/null; dc port "$svc" 8000 2>/dev/null; dc port "$svc" 3000 2>/dev/null)" \
+              || { echo "$svc publishes a port"; exit 1; }
+          done
+          dc ps --format '{{.Service}} {{.Publishers}}' | tee /dev/stderr
+          for port in 5432 8000 3000; do
+            if curl -s --max-time 3 "http://127.0.0.1:$port" >/dev/null; then echo "port $port reachable"; exit 1; fi
+          done
+      - name: HTTPS, private access and app security through the proxy
+        run: |
+          C="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $STAGING_DOMAIN" http://127.0.0.1/)" = "308"
+          test "$($C -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/)" = "401"
+          # Use a known basic-auth password for the rest of the checks.
+          HASH=$(docker run --rm public.ecr.aws/docker/library/caddy:2-alpine caddy hash-password --plaintext ci-basic-pass)
+          sed -i "s|^BASIC_AUTH_HASH=.*|BASIC_AUTH_HASH='$HASH'|" .env.staging
+          docker compose -f compose.staging.yaml --env-file .env.staging up -d caddy
+          scripts/staging-wait.sh
+          A="$C -u safepay-beta:ci-basic-pass"
+          $A https://$STAGING_DOMAIN/ | grep -q 'lang="mn"'
+          $A -D - -o /dev/null https://$STAGING_DOMAIN/ | grep -qi '^strict-transport-security'
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/health)" = "404"
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/dev/mailbox?email=a@b.c)" = "404"
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/admin/overview)" = "401"
+          test "$($A -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}' https://$STAGING_DOMAIN/api/auth/login)" = "403"
+          reg() { $A -o /dev/null -w '%{http_code}' -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d "{\"email\":\"$1\",\"password\":\"Correct-Horse-Battery-9\",\"display_name\":\"CI\"}" https://$STAGING_DOMAIN/api/auth/register; }
+          test "$(reg before@example.com)" = "202"
+          $A -D cookies.txt -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"before@example.com","password":"Correct-Horse-Battery-9"}' https://$STAGING_DOMAIN/api/auth/login
+          grep -i 'set-cookie: __Host-safepay_session=' cookies.txt | grep -qi 'secure'
+          grep -i 'set-cookie: __Host-safepay_session=' cookies.txt | grep -qi 'httponly'
+      - name: Refuses unsafe configuration and real-payment mode
+        run: |
+          run() { docker compose -f compose.staging.yaml --env-file .env.staging run --rm --no-deps "$@" api \
+            python -c "from app.core.config import Settings; Settings()"; }
+          run >/dev/null
+          for bad in "PAYMENT_MODE=live" "PAYMENTS_SIMULATION_ONLY=false" "DEV_MAILBOX_ENABLED=true" "COOKIE_SECURE=false"; do
+            if run -e "$bad" >/dev/null 2>&1; then echo "accepted $bad"; exit 1; fi
+            echo "refused: $bad"
+          done
+      - name: Containers are hardened
+        run: |
+          dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
+          for svc in api admin-api worker web; do
+            dc exec -T "$svc" awk '$2 == "/" { split($4, o, ","); exit (o[1] == "ro" ? 0 : 1) }' /proc/mounts \
+              || { echo "$svc root filesystem is writable"; exit 1; }
+          done
+          test "$(docker inspect -f '{{.HostConfig.LogConfig.Config}}' "$(dc ps -q api)")" = "map[max-file:5 max-size:10m]"
+          test "$(docker inspect -f '{{.HostConfig.Memory}}' "$(dc ps -q api)")" = "536870912"
+          dc logs worker | grep -q "automatic release: disabled"
+          test "$(dc exec -T db psql -U postgres -d safepay -At -c 'SELECT auto_release_enabled FROM platform_policy')" = "f"
+      - name: Backup and restore (disposable data)
+        run: |
+          C="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1 -u safepay-beta:ci-basic-pass"
+          q() { docker compose -f compose.staging.yaml --env-file .env.staging exec -T db psql -U postgres -d safepay -At -c "$1"; }
+          scripts/staging-backup.sh
+          $C -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"after@example.com","password":"Correct-Horse-Battery-9","display_name":"CI"}' https://$STAGING_DOMAIN/api/auth/register
+          test "$(q "SELECT count(*) FROM users")" = "2"
+          scripts/staging-restore.sh backups/daily/safepay-*.dump --yes
+          scripts/staging-wait.sh
+          test "$(q "SELECT string_agg(email, ',') FROM users")" = "before@example.com"
+          $C https://$STAGING_DOMAIN/ | grep -q 'lang="mn"'
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f compose.staging.yaml --env-file .env.staging logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose.staging.yaml --env-file .env.staging down -v || true
