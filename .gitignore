@@ -25,3 +25,6 @@ coverage/
 .idea/
 .vscode/
 .e2e-logs/
+
+.env.staging
+backups/

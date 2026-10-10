@@ -1,0 +1,56 @@
+# SafePay private STAGING edge (HTTPS only). All payments are simulated.
+# Values come from the caddy service environment (see compose.staging.yaml).
+{
+	admin off
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Internal liveness endpoint for the container healthcheck (never published).
+http://127.0.0.1:8080 {
+	respond /healthz 200
+}
+
+{$STAGING_DOMAIN} {
+	# "internal" = Caddy's own CA (local/CI); an email address = Let's Encrypt (real domain).
+	tls {$CADDY_TLS}
+
+	# Private access, layer 1: only listed networks (default: everyone; set it!).
+	@outside not remote_ip {$ALLOWED_IPS}
+	respond @outside "Forbidden" 403
+
+	# Layer 1b: the admin area is restricted further.
+	@admin_outside {
+		path /admin /admin/* /api/admin/*
+		not remote_ip {$ADMIN_ALLOWED_IPS}
+	}
+	respond @admin_outside "Forbidden" 403
+
+	# Private access, layer 2: one shared credential for the whole beta site.
+	# The app's own login, CSRF and (for admins) password + TOTP still apply behind it.
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	# Caddy ignores client-supplied X-Forwarded-For (no trusted_proxies set) and sends
+	# the real client address, which the web proxy forwards to the API for rate limits.
+	reverse_proxy web:3000 {
+		header_up -Authorization
+	}
+
+	# No access log: URLs can carry one-time tokens (invites, verification links).
+}

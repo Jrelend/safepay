@@ -238,3 +238,101 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  staging:
+    name: Staging stack (HTTPS proxy, isolation, backup/restore)
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    env:
+      STAGING_DOMAIN: safepay.test
+      ORIGIN: https://safepay.test
+    steps:
+      - uses: actions/checkout@v5
+      - name: Lint staging scripts
+        run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh
+      - name: Validate staging compose with the example env
+        run: docker compose -f compose.staging.yaml --env-file .env.staging.example config -q
+      - name: Generate secrets (as an operator would)
+        run: |
+          scripts/staging-init-secrets.sh "$STAGING_DOMAIN" | grep -v password
+          test "$(stat -c %a .env.staging)" = "600"
+          # CI runner reaches Caddy via the Docker gateway, so allow it everywhere.
+          sed -i 's|^ADMIN_ALLOWED_IPS=.*|ADMIN_ALLOWED_IPS="0.0.0.0/0 ::/0"|' .env.staging
+          grep -Eq '^[^#]*CHANGE_ME' .env.staging && exit 1 || true
+      - name: Start the staging stack
+        run: |
+          docker compose -f compose.staging.yaml --env-file .env.staging up -d --build
+          scripts/staging-wait.sh
+      - name: Only the HTTPS proxy is published
+        run: |
+          dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
+          for svc in db migrate api admin-api worker web; do
+            test -z "$(dc port "$svc" 5432 2>/dev/null; dc port "$svc" 8000 2>/dev/null; dc port "$svc" 3000 2>/dev/null)" \
+              || { echo "$svc publishes a port"; exit 1; }
+          done
+          dc ps --format '{{.Service}} {{.Publishers}}' | tee /dev/stderr
+          for port in 5432 8000 3000; do
+            if curl -s --max-time 3 "http://127.0.0.1:$port" >/dev/null; then echo "port $port reachable"; exit 1; fi
+          done
+      - name: HTTPS, private access and app security through the proxy
+        run: |
+          C="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $STAGING_DOMAIN" http://127.0.0.1/)" = "308"
+          test "$($C -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/)" = "401"
+          # Use a known basic-auth password for the rest of the checks.
+          HASH=$(docker run --rm public.ecr.aws/docker/library/caddy:2-alpine caddy hash-password --plaintext ci-basic-pass)
+          sed -i "s|^BASIC_AUTH_HASH=.*|BASIC_AUTH_HASH='$HASH'|" .env.staging
+          docker compose -f compose.staging.yaml --env-file .env.staging up -d caddy
+          scripts/staging-wait.sh
+          A="$C -u safepay-beta:ci-basic-pass"
+          $A https://$STAGING_DOMAIN/ | grep -q 'lang="mn"'
+          $A -D - -o /dev/null https://$STAGING_DOMAIN/ | grep -qi '^strict-transport-security'
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/health)" = "404"
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/dev/mailbox?email=a@b.c)" = "404"
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/admin/overview)" = "401"
+          test "$($A -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}' https://$STAGING_DOMAIN/api/auth/login)" = "403"
+          reg() { $A -o /dev/null -w '%{http_code}' -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d "{\"email\":\"$1\",\"password\":\"Correct-Horse-Battery-9\",\"display_name\":\"CI\"}" https://$STAGING_DOMAIN/api/auth/register; }
+          test "$(reg before@example.com)" = "202"
+          $A -D cookies.txt -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"before@example.com","password":"Correct-Horse-Battery-9"}' https://$STAGING_DOMAIN/api/auth/login
+          grep -i 'set-cookie: __Host-safepay_session=' cookies.txt | grep -qi 'secure'
+          grep -i 'set-cookie: __Host-safepay_session=' cookies.txt | grep -qi 'httponly'
+      - name: Refuses unsafe configuration and real-payment mode
+        run: |
+          run() { docker compose -f compose.staging.yaml --env-file .env.staging run --rm --no-deps "$@" api \
+            python -c "from app.core.config import Settings; Settings()"; }
+          run >/dev/null
+          for bad in "PAYMENT_MODE=live" "PAYMENTS_SIMULATION_ONLY=false" "DEV_MAILBOX_ENABLED=true" "COOKIE_SECURE=false"; do
+            if run -e "$bad" >/dev/null 2>&1; then echo "accepted $bad"; exit 1; fi
+            echo "refused: $bad"
+          done
+      - name: Containers are hardened
+        run: |
+          dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
+          for svc in api admin-api worker web; do
+            dc exec -T "$svc" awk '$2 == "/" { split($4, o, ","); exit (o[1] == "ro" ? 0 : 1) }' /proc/mounts \
+              || { echo "$svc root filesystem is writable"; exit 1; }
+          done
+          test "$(docker inspect -f '{{.HostConfig.LogConfig.Config}}' "$(dc ps -q api)")" = "map[max-file:5 max-size:10m]"
+          test "$(docker inspect -f '{{.HostConfig.Memory}}' "$(dc ps -q api)")" = "536870912"
+          dc logs worker | grep -q "automatic release: disabled"
+          test "$(dc exec -T db psql -U postgres -d safepay -At -c 'SELECT auto_release_enabled FROM platform_policy')" = "f"
+      - name: Backup and restore (disposable data)
+        run: |
+          C="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1 -u safepay-beta:ci-basic-pass"
+          q() { docker compose -f compose.staging.yaml --env-file .env.staging exec -T db psql -U postgres -d safepay -At -c "$1"; }
+          scripts/staging-backup.sh
+          $C -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"after@example.com","password":"Correct-Horse-Battery-9","display_name":"CI"}' https://$STAGING_DOMAIN/api/auth/register
+          test "$(q "SELECT count(*) FROM users")" = "2"
+          scripts/staging-restore.sh backups/daily/safepay-*.dump --yes
+          scripts/staging-wait.sh
+          test "$(q "SELECT string_agg(email, ',') FROM users")" = "before@example.com"
+          $C https://$STAGING_DOMAIN/ | grep -q 'lang="mn"'
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f compose.staging.yaml --env-file .env.staging logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose.staging.yaml --env-file .env.staging down -v || true
