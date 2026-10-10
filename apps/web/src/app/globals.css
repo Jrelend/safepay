@@ -1,47 +1,167 @@
 @import "tailwindcss";
 
+/*
+ * SafePay design tokens — "Modern Trustworthy Fintech".
+ * Every colour pair used for text is ≥ 4.5:1 and every component boundary
+ * (inputs, controls) is ≥ 3:1 in both themes; see docs/DESIGN_SYSTEM.md.
+ * Components use these tokens only (no raw Tailwind palette colours), so the
+ * light and dark themes stay in one place.
+ *
+ * Theme: follows the OS by default; `data-theme="light|dark"` on <html>
+ * (set from the profile page, applied before paint in layout.tsx) overrides it.
+ */
 :root {
-  --background: #f6f7f9;
+  color-scheme: light;
+  --background: #f7f9fc;
   --surface: #ffffff;
-  --foreground: #14181f;
-  --muted: #5b6573;
-  --border: #e3e6eb;
-  --brand: #0b6e4f;
+  --surface-muted: #eef2f7;
+  --foreground: #172033;
+  --muted: #5a6478;
+  --border: #e3e8f0;
+  --border-strong: #7b8597;
+
+  --primary: #101d35;
+  --primary-hover: #1c2c4d;
+  --primary-foreground: #ffffff;
+
+  --brand: #077553;
+  --brand-accent: #12b886;
+  --brand-soft: #e6f6ef;
   --brand-foreground: #ffffff;
-  --brand-soft: #e3f3ec;
-  --warning-soft: #fff4d6;
-  --warning-foreground: #7a5300;
+
+  --success: #0b7a55;
+  --success-soft: #e8f7f0;
+  --success-border: #a7e0c8;
+  --warning: #7a4f00;
+  --warning-soft: #fff5dc;
+  --warning-border: #f0cf86;
+  --danger: #b42318;
+  --danger-solid: #b42318;
+  --danger-soft: #fdeceb;
+  --danger-border: #f3b4ad;
+  --info: #1f4fb8;
+  --info-soft: #ebf1fd;
+  --info-border: #b9cdf3;
+
+  --focus: #101d35;
+  /* Brand mark (logo, "money held" seal): navy + emerald in both themes. */
+  --mark: #101d35;
+  --mark-foreground: #12b886;
+  --shadow-card: 0 1px 2px rgb(16 29 53 / 0.04), 0 1px 3px rgb(16 29 53 / 0.06);
+  --shadow-raised: 0 8px 24px rgb(16 29 53 / 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0e1116;
-    --surface: #161b22;
-    --foreground: #e8ecf1;
-    --muted: #9aa4b2;
-    --border: #2a313c;
-    --brand: #34c38f;
-    --brand-foreground: #06140f;
-    --brand-soft: #12291f;
-    --warning-soft: #2e2510;
-    --warning-foreground: #f2c75c;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #0b1220;
+    --surface: #121a2b;
+    --surface-muted: #1a2438;
+    --foreground: #e6eaf2;
+    --muted: #9aa5ba;
+    --border: #243049;
+    --border-strong: #5f6b86;
+    --primary: #2fd39e;
+    --primary-hover: #52deb0;
+    --primary-foreground: #05261b;
+    --brand: #3ddba8;
+    --brand-accent: #2fd39e;
+    --brand-soft: #0f2a22;
+    --brand-foreground: #05261b;
+    --success: #5edbae;
+    --success-soft: #0f2a22;
+    --success-border: #1e5a45;
+    --warning: #f5c66b;
+    --warning-soft: #2a2212;
+    --warning-border: #5c4718;
+    --danger: #ff8f86;
+    --danger-solid: #b42318;
+    --danger-soft: #2e1517;
+    --danger-border: #6b2a2c;
+    --info: #8db4ff;
+    --info-soft: #14213d;
+    --info-border: #2b4373;
+    --focus: #3ddba8;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-raised: 0 12px 32px rgb(0 0 0 / 0.5);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0b1220;
+  --surface: #121a2b;
+  --surface-muted: #1a2438;
+  --foreground: #e6eaf2;
+  --muted: #9aa5ba;
+  --border: #243049;
+  --border-strong: #5f6b86;
+  --primary: #2fd39e;
+  --primary-hover: #52deb0;
+  --primary-foreground: #05261b;
+  --brand: #3ddba8;
+  --brand-accent: #2fd39e;
+  --brand-soft: #0f2a22;
+  --brand-foreground: #05261b;
+  --success: #5edbae;
+  --success-soft: #0f2a22;
+  --success-border: #1e5a45;
+  --warning: #f5c66b;
+  --warning-soft: #2a2212;
+  --warning-border: #5c4718;
+  --danger: #ff8f86;
+  --danger-solid: #b42318;
+  --danger-soft: #2e1517;
+  --danger-border: #6b2a2c;
+  --info: #8db4ff;
+  --info-soft: #14213d;
+  --info-border: #2b4373;
+  --focus: #3ddba8;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-raised: 0 12px 32px rgb(0 0 0 / 0.5);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
   --color-brand: var(--brand);
-  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-accent: var(--brand-accent);
   --color-brand-soft: var(--brand-soft);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
-  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-border: var(--warning-border);
+  --color-danger: var(--danger);
+  --color-danger-solid: var(--danger-solid);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-border: var(--danger-border);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-border: var(--info-border);
+  --color-focus: var(--focus);
+  --color-mark: var(--mark);
+  --color-mark-foreground: var(--mark-foreground);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
   /* System fonts with full Mongolian Cyrillic (Ө, Ү) coverage; no build-time font download. */
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
+}
+
+html {
+  /* Keeps focused elements clear of the sticky header and the mobile tab bar (WCAG 2.4.11). */
+  scroll-padding-top: 7rem;
+  scroll-padding-bottom: 6rem;
 }
 
 body {
@@ -49,4 +169,21 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-tap-highlight-color: transparent;
+}
+
+/* In the base layer so utilities (e.g. focus-visible:outline-white on dark strips) can override it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
