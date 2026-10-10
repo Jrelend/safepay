@@ -25,8 +25,8 @@ docker compose up --build     # web: http://localhost:3000
 # Local only: with DEV_MAILBOX_ENABLED=true, verification/reset links appear at
 #   http://localhost:3000/dev/mailbox
 # Make someone an admin (owner credential, audited):
-docker compose run --rm -e MIGRATION_DATABASE_URL=postgresql+psycopg://safepay_migrator:<pw>@db:5432/safepay \
-  migrate python -m app.cli grant-admin you@example.com
+# (asks for a separate ADMIN password, prints a TOTP secret once; sign in at /admin/login)
+docker compose run --rm -it migrate python -m app.cli grant-admin you@example.com
 # hot reload:
 docker compose -f compose.yaml -f compose.dev.yaml up --build
 ```
@@ -76,4 +76,6 @@ allowed `Origin`.
 * [Security requirements and database security model](docs/SECURITY.md)
 * [Development phases](docs/PHASES.md)
 * [Beta v0.1 plan and continuation log](docs/BETA_PLAN.md)
+* [Private staging: architecture, costs, deployment, backups](docs/STAGING.md)
+* [Beta final security review](docs/security-review-beta.md)
 * [Phase 1A security review](docs/security-review-phase-1a.md)

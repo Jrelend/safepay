@@ -61,9 +61,10 @@ Three gates enforce the role split:
 3. `GET /ready` returns **503** if the API's connection is a superuser, can
    bypass RLS, or owns any object in `public`.
 
-### What each runtime role can do (migration 0003)
+### What each runtime role can do (migrations 0003–0005)
 
-Generated from `information_schema` on a database at head `0003`.
+Generated from `information_schema` at head `0003`, updated for 0004 (`platform_policy`)
+and 0005 (admin authentication).
 
 | Table | `safepay_app` (public API) | `safepay_system` (worker) | `safepay_admin` (admin API) |
 |---|---|---|---|
@@ -72,13 +73,15 @@ Generated from `information_schema` on a database at head `0003`.
 | `deals` | SELECT, INSERT (DRAFT, v1 only); UPDATE of draft terms + invite columns only — **never `status`** | SELECT | SELECT |
 | `deal_participants` | SELECT, INSERT (before acceptance) — **no UPDATE** (acceptance only via the transition function) | – | SELECT |
 | `users` | SELECT, INSERT; UPDATE `display_name, phone_e164, password_hash, email_verified_at, updated_at` — **not `status`** | – | SELECT |
-| `admins` | SELECT | – | SELECT |
-| `sessions` | SELECT, INSERT; UPDATE `last_seen_at, revoked_at` | – | SELECT |
+| `admins` | SELECT (`user_id` only) | – | SELECT; UPDATE `totp_last_step` (forward only) |
+| `admin_sessions` | – | – | SELECT, INSERT; UPDATE `last_seen_at, revoked_at` |
+| `platform_policy` | SELECT | SELECT | SELECT |
+| `sessions` | SELECT, INSERT; UPDATE `last_seen_at, revoked_at` | – | – |
 | `auth_tokens` | SELECT, INSERT; UPDATE `used_at` | – | – |
 | `disputes` | SELECT | – | SELECT |
 | `dispute_evidence` | SELECT, INSERT (participants, open dispute; append-only) | – | SELECT, INSERT (admin notes) |
 | `notifications` | SELECT, INSERT; UPDATE `read_at` | – | – |
-| `email_outbox`, `rate_limits` | SELECT, INSERT (`rate_limits.count` UPDATE) | SELECT, DELETE (cleanup) | – |
+| `email_outbox`, `rate_limits` | SELECT, INSERT (`rate_limits.count` UPDATE) | SELECT, DELETE (cleanup) | `rate_limits` only (admin login limits) |
 | `idempotency_records` | SELECT, INSERT (claim); UPDATE `response, completed_at` once | – | – |
 | `deal_transitions`, `alembic_version` | SELECT | `alembic_version` | SELECT |
 
@@ -221,6 +224,28 @@ with atomic(session):            # exactly one DB transaction; refuses nesting
 * The holder of a role credential is still trusted for that role's scope. Protect each
   like a payment key; they are separate so a public-API compromise cannot pay out.
 
+## Release safety (Beta v0.1)
+
+Escrow leaves only via the buyer's confirmation, the seller's refund or an admin decision.
+`platform_policy.auto_release_enabled` is **false** and only the schema owner can change it
+(`app.cli set-auto-release`, audited); the SYSTEM function refuses `AUTO_RELEASE` (SPD10)
+while it is false. See `transaction-states.md` → "Release safety".
+
+## Admin authentication (separate from user login)
+
+* The admin API never trusts public sessions. Admins sign in at `/admin/login` with their
+  email, a **separate admin password** (Argon2id) and a **TOTP code** (RFC 6238, each step
+  usable once, ±1 step drift).
+* Credentials live in `admins.password_hash` / `admins.totp_secret`, readable only by
+  `safepay_admin`; set and reset only with the owner CLI (`grant-admin`,
+  `reset-admin-credentials`), which prints the TOTP secret once.
+* Sessions live in `admin_sessions` (writable only by `safepay_admin`): 8 h absolute,
+  30 min idle, `SameSite=Strict` cookies, own CSRF token; revoked on credential reset,
+  logout, or when the user is suspended.
+* A leaked `safepay_app` credential can no longer mint admin access (tested).
+* Conflict of interest: admins cannot view, annotate or decide disputes on their own deals,
+  nor change the status of someone they share a deal with.
+
 ## Application security (Beta v0.1)
 
 | Control | Implementation |
@@ -327,11 +352,13 @@ as `safepay_migrator`.
   not be published publicly.
 * **No real email delivery.** Verification and reset emails go to `email_outbox`; a
   transactional email provider (with SPF/DKIM) is needed before real users.
-* **No MFA / step-up auth for admins.** Admin sessions are ordinary sessions on the
-  admin API. Add TOTP/WebAuthn and IP allow-listing for `/admin` before a beta.
-* **Security headers.** `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
-  `Permissions-Policy` are set; a strict Content-Security-Policy and HSTS (at the TLS
-  proxy) are still to do.
+* **Admin MFA is TOTP only.** Consider WebAuthn later; staging also restricts `/admin` by IP.
+* **Pre-registration:** someone can register another person's email first. Verification
+  revokes the squatter's sessions but the owner should then reset the password.
+* **Phone numbers are unverified** (shown as such); add OTP before relying on them.
+* **CSP allows `'unsafe-inline'`** (Next.js without nonces).
+* **Security headers.** Set by Next.js and, on staging, by Caddy (HSTS, CSP, frame,
+  referrer, permissions). Production needs the same edge configuration.
 * **Tamper evidence:** a hash chain over audit rows and a periodic reconciliation job
   (total debits = total credits; escrow = amount for FUNDED/DELIVERED/DISPUTED deals).
 * **Data protection:** retention policy for sessions, evidence files and the outbox;

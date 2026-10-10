@@ -28,10 +28,18 @@ Phases 1B–5 of the beta brief, all with **simulated** payments only.
 | Mongolian mobile UI (5) | ✅ | Landing, register, login, verify, reset, dashboard, create/edit deal, deal details, history, invite, notifications, profile, security, dispute, admin (disputes, users, audit), dev mailbox. |
 | Tests | ✅ | pytest (unit + PostgreSQL integration incl. HTTP), Vitest, Playwright E2E. |
 
+## Staging preparation ✅ (this PR, not deployed)
+
+* Automatic release disabled by default (migration 0004), enforced in SQL.
+* Final security review: 12 findings fixed with regression tests
+  (`security-review-beta.md`), incl. separate admin authentication (migration 0005).
+* Private staging stack (`compose.staging.yaml`, Caddy HTTPS edge, backups) — see
+  `STAGING.md`. Scenario tests A–L; UI reviewed at 390/768/1440 px.
+
 ## Before a private beta (not started)
 
-* Real transactional email; admin MFA; reverse proxy that sets `X-Forwarded-For`;
-  CSP + HSTS; backups; monitoring of the worker; audit hash chain + reconciliation job;
+* Real transactional email; phone OTP; deploy the staging stack on an approved VPS;
+  off-site backup copies; monitoring/alerting of the worker; audit hash chain + reconciliation job;
   privacy policy and terms in Mongolian; retention policy; load testing; external
   security review.
 

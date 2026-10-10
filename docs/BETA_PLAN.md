@@ -42,3 +42,18 @@
   exercised before E2E. Fixed with an explicit cast; `tests/integration/test_admin_cli.py`.
 - **Admin notes leaked to participants** in the dispute view. Fixed in
   `services/disputes.view`. Regression: `test_admin_decision_refunds_and_is_audited`.
+
+## Staging preparation (round 2)
+
+| # | Milestone | Status |
+|---|---|---|
+| S1 | Release safety: automatic release off by default (0004), regression tests | ✅ |
+| S2 | Final security review: findings fixed (incl. admin auth 0005) | ✅ |
+| S3 | Private staging stack: Caddy HTTPS edge, isolation, hardening, backups | ✅ |
+| S4 | Scenario tests A–L, UI review 390/768/1440 | ✅ |
+| S5 | CI staging job, docs (STAGING, security review), PR update | ✅ |
+| — | Deploy to a VPS | ⛔ not approved |
+
+Bugs found while doing this (all fixed): empty `ACME_EMAIL` broke the Caddyfile;
+`staging-restore.sh` exited 1 after a successful restore (trap); retiring reset tokens
+before flushing hit the append-only token guard; `.env.staging.example` was git-ignored.
