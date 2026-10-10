@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { AdminGuard } from "@/components/admin-guard";
-import { Alert, Button, Card, Field, PageTitle, Skeleton } from "@/components/ui";
+import { Alert, Button, Card, EmptyState, Field, PageTitle, Skeleton, TONE_SOFT } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { useApi } from "@/lib/client/use-api";
 import type { AdminUser } from "@/lib/types";
@@ -53,7 +53,10 @@ function Content() {
       </form>
       {users.loading && !users.data ? <Skeleton /> : null}
       {users.error ? <Alert tone="danger">{users.error.message}</Alert> : null}
-      <ul className="space-y-2">
+      {users.data && users.data.length === 0 ? (
+        <EmptyState icon="users" title="Хэрэглэгч олдсонгүй" body="Өөр имэйл эсвэл нэрээр хайна уу." />
+      ) : null}
+      <ul className="grid gap-2 md:grid-cols-2">
         {users.data?.map((u) => (
           <li key={u.id}>
             <Card className="space-y-2">
@@ -65,14 +68,19 @@ function Content() {
                   <div className="text-muted text-xs break-all">{u.email}</div>
                 </div>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${u.status === "ACTIVE" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}
+                  className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold ${TONE_SOFT[u.status === "ACTIVE" ? "success" : "danger"]}`}
                 >
                   {u.status === "ACTIVE" ? "Идэвхтэй" : "Түдгэлзүүлсэн"}
                 </span>
               </div>
               {target?.id === u.id ? (
                 <div className="space-y-2">
-                  <Field label="Шалтгаан (заавал)" value={reason} onChange={(e) => setReason(e.target.value)} minLength={5} />
+                  <Field
+                    label="Шалтгаан (заавал, 5+ тэмдэгт)"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    minLength={5}
+                  />
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant="secondary" onClick={() => setTarget(null)}>
                       Болих
@@ -83,7 +91,15 @@ function Content() {
                   </div>
                 </div>
               ) : (
-                <Button variant="ghost" onClick={() => setTarget(u)} className="w-full">
+                <Button
+                  variant={u.status === "ACTIVE" ? "dangerOutline" : "secondary"}
+                  size="sm"
+                  onClick={() => {
+                    setReason("");
+                    setTarget(u);
+                  }}
+                  className="w-full sm:w-auto"
+                >
                   {u.status === "ACTIVE" ? "Түдгэлзүүлэх" : "Сэргээх"}
                 </Button>
               )}
