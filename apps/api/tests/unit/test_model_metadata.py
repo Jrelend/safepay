@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "sessions",
     "auth_tokens",
     "email_outbox",
+    "platform_policy",
     "rate_limits",
     "disputes",
     "dispute_evidence",

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # Background worker (safepay_system role).
     system_database_url: PostgresDsn | None = None
     worker_interval_seconds: int = Field(default=60, ge=5, le=3600)
+    # Beta v0.1: an expired inspection window never releases escrow by itself. Even if
+    # set, the DB still refuses unless platform_policy.auto_release_enabled is true.
+    worker_auto_release: bool = False
 
     # Hard safety switch: SafePay Beta must never move real money. Any value
     # other than true is rejected at startup.

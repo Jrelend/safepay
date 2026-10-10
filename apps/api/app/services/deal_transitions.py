@@ -84,6 +84,12 @@ class NotAdministratorError(DealTransitionError):
     sqlstate = "SPD09"
 
 
+class AutoReleaseDisabledError(DealTransitionError):
+    """AUTO_RELEASE refused: platform_policy.auto_release_enabled is false (Beta default)."""
+
+    sqlstate = "SPD10"
+
+
 _ERRORS: dict[str, type[DealTransitionError]] = {
     cls.sqlstate: cls
     for cls in (
@@ -96,6 +102,7 @@ _ERRORS: dict[str, type[DealTransitionError]] = {
         ReasonRequiredError,
         NotYetEligibleError,
         NotAdministratorError,
+        AutoReleaseDisabledError,
     )
 }
 

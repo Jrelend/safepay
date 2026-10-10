@@ -58,7 +58,7 @@ def _scalar(engine: Engine, sql: str) -> object:
 
 def test_new_database_initializes_with_correct_ownership(fresh_db: Engine) -> None:
     command.upgrade(_alembic(), "head")
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0003"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0004"
     assert (
         _scalar(
             fresh_db,
@@ -125,7 +125,7 @@ def test_downgrade_refuses_to_destroy_data(fresh_db: Engine) -> None:
     with pytest.raises(Exception, match="refusing to downgrade"):
         command.downgrade(_alembic(), "base")
     assert _scalar(fresh_db, "SELECT count(*) FROM users") == 1
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0003"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") in ("0003", "0004")
     # Explicit, deliberate opt-in still works (after a backup).
     command.downgrade(_alembic("allow_data_loss=true"), "base")
     assert _scalar(fresh_db, "SELECT to_regclass('public.users') IS NULL") is True
@@ -171,3 +171,30 @@ def test_downgrade_of_0002_refuses_when_idempotency_records_exist(fresh_db: Engi
     with pytest.raises(Exception, match="refusing to downgrade"):
         command.downgrade(_alembic(), "0001")
     assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0002"
+
+
+def test_downgrade_below_0004_refuses_while_deals_are_delivered(fresh_db: Engine) -> None:
+    """Going back to 0003 would re-enable time-based auto-release for DELIVERED deals."""
+    command.upgrade(_alembic(), "head")
+    assert _scalar(fresh_db, "SELECT auto_release_enabled FROM platform_policy") is False
+    with fresh_db.begin() as conn:
+        conn.execute(text("SET LOCAL session_replication_role = replica"))  # test-only setup
+        user_id = conn.execute(
+            text(
+                "INSERT INTO users (email, password_hash, display_name, status) "
+                "VALUES ('d@example.com', '!x', 'd', 'ACTIVE') RETURNING id"
+            )
+        ).scalar_one()
+        conn.execute(
+            text(
+                "INSERT INTO deals (reference, title, description, amount_mnt, status, "
+                "created_by_id, invite_token_hash) VALUES ('SP-DELIVER1', 'Television', '', 5000, "
+                "'DELIVERED', :u, repeat('a', 64))"
+            ),
+            {"u": user_id},
+        )
+    with pytest.raises(Exception, match="re-enable time-based automatic"):
+        command.downgrade(_alembic(), "0003")
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0004"
+    command.downgrade(_alembic("allow_data_loss=true"), "0003")
+    assert _scalar(fresh_db, "SELECT to_regclass('public.platform_policy') IS NULL") is True

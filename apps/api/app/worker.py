@@ -54,11 +54,13 @@ def system_engine() -> Engine:
     return create_engine(str(url), pool_pre_ping=True)
 
 
-def run_once(engine: Engine) -> PassResult:
+def run_once(engine: Engine, *, auto_release: bool = False) -> PassResult:
+    """One worker pass. Automatic release is OFF unless explicitly requested (and the DB
+    policy also allows it); by default DELIVERED deals wait for the buyer or an admin."""
     result = PassResult()
     with engine.connect() as conn:
         expiring = list(conn.execute(_EXPIRY_CANDIDATES, {"days": EXPIRY_DAYS}).scalars())
-        releasing = list(conn.execute(_RELEASE_CANDIDATES).scalars())
+        releasing = list(conn.execute(_RELEASE_CANDIDATES).scalars()) if auto_release else []
     for action, ids, bucket in (
         (DealAction.EXPIRE, expiring, result.expired),
         (DealAction.AUTO_RELEASE, releasing, result.released),
@@ -84,9 +86,11 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     engine = system_engine()
-    interval = get_settings().worker_interval_seconds
+    settings = get_settings()
+    interval = settings.worker_interval_seconds
+    log.info("automatic release: %s", "requested" if settings.worker_auto_release else "disabled")
     while True:
-        outcome = run_once(engine)
+        outcome = run_once(engine, auto_release=settings.worker_auto_release)
         log.info(
             "pass: expired=%d auto_released=%d skipped=%d",
             len(outcome.expired),

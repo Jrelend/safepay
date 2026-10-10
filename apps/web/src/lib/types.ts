@@ -45,6 +45,8 @@ export type Deal = {
   counterparty_accepted: boolean;
   dispute_id: string | null;
   actions: DealAction[];
+  inspection_ends_at: string | null;
+  /** Set only if the platform enables automatic release (never in Beta v0.1). */
   auto_release_at: string | null;
   status_changed_at: string;
   created_at: string;

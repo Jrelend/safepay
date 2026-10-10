@@ -3,6 +3,8 @@ owner credential (MIGRATION_DATABASE_URL). The admin API cannot create admins.
 
     python -m app.cli grant-admin someone@example.com --note "ops on-call"
     python -m app.cli revoke-admin someone@example.com
+    python -m app.cli set-auto-release off --note "beta policy"   # default: off
+    python -m app.cli outbox tester@example.com   # simulated emails (no real email yet)
 """
 
 import argparse
@@ -64,6 +66,50 @@ def revoke_admin(email: str) -> None:
     print(f"revoked admin from {address}")
 
 
+def set_auto_release(enabled: bool, note: str) -> None:
+    """Owner-only: flip the platform policy. Off by default in Beta v0.1."""
+    with _engine().begin() as conn:
+        old = conn.execute(
+            text("SELECT auto_release_enabled FROM platform_policy WHERE id FOR UPDATE")
+        ).scalar_one()
+        conn.execute(
+            text("UPDATE platform_policy SET auto_release_enabled = :e, note = :n WHERE id"),
+            {"e": enabled, "n": note[:200]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO audit_events (actor_type, action, entity_type, entity_id, data) "
+                "VALUES ('SYSTEM', 'policy.auto_release_changed', 'platform_policy', "
+                "'00000000-0000-0000-0000-000000000000', "
+                "jsonb_build_object('from', CAST(:o AS boolean), 'to', CAST(:e AS boolean), "
+                "'note', CAST(:n AS text)))"
+            ),
+            {"o": old, "e": enabled, "n": note[:200]},
+        )
+    print(f"automatic release {'ENABLED' if enabled else 'disabled'}")
+
+
+def show_outbox(email: str, limit: int) -> None:
+    """Owner-only: print recent simulated emails (no real email in Beta v0.1).
+
+    For a private staging run: lets the operator relay a tester's verification or
+    reset link over a trusted channel. Never expose this over HTTP.
+    """
+    address = normalize_email(email)
+    with _engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT created_at, template, data FROM email_outbox WHERE to_email = :e "
+                "ORDER BY created_at DESC LIMIT :n"
+            ),
+            {"e": address, "n": limit},
+        ).all()
+    if not rows:
+        print("no simulated emails for that address")
+    for created_at, template, data in rows:
+        print(f"{created_at:%Y-%m-%d %H:%M} {template}: {data.get('link', '')}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -72,11 +118,21 @@ def main() -> None:
     g.add_argument("--note", default="")
     r = sub.add_parser("revoke-admin")
     r.add_argument("email")
+    a = sub.add_parser("set-auto-release")
+    a.add_argument("state", choices=["on", "off"])
+    a.add_argument("--note", default="")
+    o = sub.add_parser("outbox")
+    o.add_argument("email")
+    o.add_argument("--limit", type=int, default=5)
     args = parser.parse_args()
     if args.command == "grant-admin":
         grant_admin(args.email, args.note)
-    else:
+    elif args.command == "revoke-admin":
         revoke_admin(args.email)
+    elif args.command == "set-auto-release":
+        set_auto_release(args.state == "on", args.note)
+    else:
+        show_outbox(args.email, args.limit)
 
 
 if __name__ == "__main__":

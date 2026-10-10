@@ -27,6 +27,7 @@ from app.models import (
     LedgerTransaction,
     Notification,
     ParticipantRole,
+    PlatformPolicy,
     User,
 )
 from app.services.deal_transitions import PUBLIC_ACTIONS
@@ -276,6 +277,8 @@ class DealView:
     counterparty_accepted: bool
     dispute_id: uuid.UUID | None
     actions: list[DealAction]
+    inspection_ends_at: datetime | None
+    # Only set when platform_policy enables automatic release (never in Beta v0.1).
     auto_release_at: datetime | None
 
 
@@ -309,10 +312,13 @@ def view_deal(db: Session, *, deal_id: uuid.UUID, user_id: uuid.UUID) -> DealVie
     other = next(((p, u) for p, u in parts if p.user_id != user_id), None)
     created_by_me = deal.created_by_id == user_id
     dispute_id = db.scalar(select(Dispute.id).where(Dispute.deal_id == deal_id))
-    auto_release = (
+    inspection_ends = (
         deal.status_changed_at + timedelta(days=deal.inspection_days)
         if deal.status is DealStatus.DELIVERED
         else None
+    )
+    auto_release_on = inspection_ends is not None and bool(
+        db.scalar(select(PlatformPolicy.auto_release_enabled).where(PlatformPolicy.id))
     )
     return DealView(
         deal=deal,
@@ -328,7 +334,8 @@ def view_deal(db: Session, *, deal_id: uuid.UUID, user_id: uuid.UUID) -> DealVie
         counterparty_accepted=bool(other and other[0].accepted_at is not None),
         dispute_id=dispute_id,
         actions=_actions(deal, mine.role, created_by_me, other is not None),
-        auto_release_at=auto_release,
+        inspection_ends_at=inspection_ends,
+        auto_release_at=inspection_ends if auto_release_on else None,
     )
 
 

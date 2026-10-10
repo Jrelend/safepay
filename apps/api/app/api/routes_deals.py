@@ -133,6 +133,7 @@ def _deal_out(view: svc.DealView) -> DealOut:
         counterparty_accepted=view.counterparty_accepted,
         dispute_id=view.dispute_id,
         actions=view.actions,
+        inspection_ends_at=view.inspection_ends_at,
         auto_release_at=view.auto_release_at,
         status_changed_at=d.status_changed_at,
         created_at=d.created_at,

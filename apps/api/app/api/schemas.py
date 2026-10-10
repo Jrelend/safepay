@@ -42,6 +42,7 @@ class DealOut(BaseModel):
     counterparty_accepted: bool
     dispute_id: uuid.UUID | None
     actions: list[DealAction]
+    inspection_ends_at: datetime | None
     auto_release_at: datetime | None
     status_changed_at: datetime
     created_at: datetime

@@ -15,6 +15,7 @@ from app.models.dispute import (
 )
 from app.models.idempotency import IdempotencyRecord
 from app.models.ledger import LedgerAccount, LedgerEntry, LedgerTransaction
+from app.models.policy import PlatformPolicy
 from app.models.user import Admin, User, UserStatus
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "LedgerTransaction",
     "Notification",
     "ParticipantRole",
+    "PlatformPolicy",
     "RateLimit",
     "TokenPurpose",
     "User",

@@ -112,7 +112,10 @@ def test_system_function_rechecks_eligibility(app_engine: Engine, system_engine:
     advance_to_awaiting_payment(app_engine, sc)
     act(app_engine, sc, DealAction.FUND, Actor.BUYER)
     act(app_engine, sc, DealAction.MARK_DELIVERED, Actor.SELLER)
-    with system_engine.connect() as conn, pytest.raises(DBAPIError, match="has not ended"):
+    with (
+        system_engine.connect() as conn,
+        pytest.raises(DBAPIError, match=r"automatic release is disabled|has not ended"),
+    ):
         conn.execute(text(f"SELECT {SYSTEM}(:d, 'AUTO_RELEASE', 'x')"), {"d": sc.deal_id})
     with (
         system_engine.connect() as conn,
@@ -130,7 +133,7 @@ def _status(engine: Engine, deal_id: uuid.UUID) -> str:
         )
 
 
-def test_worker_expires_and_auto_releases_only_eligible_deals(
+def test_worker_expires_only_eligible_deals_and_never_auto_releases(
     app_engine: Engine, system_engine: Engine, engine: Engine
 ) -> None:
     stale = new_deal(app_engine)
@@ -142,14 +145,14 @@ def test_worker_expires_and_auto_releases_only_eligible_deals(
     act(app_engine, delivered, DealAction.FUND, Actor.BUYER)
     act(app_engine, delivered, DealAction.MARK_DELIVERED, Actor.SELLER)
     backdate(stale.deal_id, 8)
-    backdate(delivered.deal_id, 4)  # default inspection window is 3 days
+    backdate(delivered.deal_id, 30)  # long past the inspection window
     result = run_once(system_engine)
     assert stale.deal_id in result.expired
-    assert delivered.deal_id in result.released
     assert fresh.deal_id not in result.expired
+    assert result.released == []
     assert _status(engine, stale.deal_id) == DealStatus.EXPIRED
     assert _status(engine, fresh.deal_id) == DealStatus.AWAITING_PAYMENT
-    assert _status(engine, delivered.deal_id) == DealStatus.COMPLETED
-    # A second pass is a no-op.
+    # Beta v0.1: an expired inspection window alone never releases escrow.
+    assert _status(engine, delivered.deal_id) == DealStatus.DELIVERED
     again = run_once(system_engine)
-    assert stale.deal_id not in again.expired and delivered.deal_id not in again.released
+    assert stale.deal_id not in again.expired

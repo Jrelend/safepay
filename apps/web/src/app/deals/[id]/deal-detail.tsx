@@ -17,6 +17,40 @@ import type { Deal, DealAction, Posting, TimelineEvent } from "@/lib/types";
 
 import { InviteBox } from "./invite-box";
 
+/**
+ * Beta v0.1: escrow is never released just because the inspection window ended.
+ * Only the buyer's confirmation or a SafePay admin decision releases it.
+ */
+function InspectionNotice({ deal, endsAt }: { deal: Deal; endsAt: string }) {
+  const [now] = useState(() => Date.now());
+  const ended = new Date(endsAt).getTime() <= now;
+  if (deal.auto_release_at) {
+    return (
+      <Alert tone="info">
+        Шалгах хугацаа <strong>{formatDateTime(deal.auto_release_at)}</strong>-д дуусна. Тэр хүртэл асуудал
+        мэдэгдээгүй бол мөнгө худалдагчид автоматаар шилжинэ.
+      </Alert>
+    );
+  }
+  return (
+    <Alert tone={ended ? "warning" : "info"} title={ended ? "Шалгах хугацаа дууссан" : undefined}>
+      {ended ? null : (
+        <>
+          Шалгах хугацаа <strong>{formatDateTime(endsAt)}</strong>-д дуусна.{" "}
+        </>
+      )}
+      Мөнгө барьцаанд хэвээр байна: зөвхөн худалдан авагч хүлээн авснаа баталсан эсвэл SafePay ажилтан
+      маргааныг шийдвэрлэсний дараа шилжинэ. Хугацаа дуусахад автоматаар шилжихгүй.
+      {ended && deal.my_role === "SELLER"
+        ? " Худалдан авагч хариу өгөхгүй байвал «Маргаан нээх» товчоор SafePay-д хандана уу."
+        : ""}
+      {ended && deal.my_role === "BUYER"
+        ? " Бараа зүгээр бол хүлээн авснаа батална уу, асуудалтай бол маргаан нээнэ үү."
+        : ""}
+    </Alert>
+  );
+}
+
 const POSTING_LABEL: Record<string, string> = {
   ESCROW_HOLD: "Барьцаанд байршсан",
   ESCROW_RELEASE: "Худалдагчид шилжсэн",
@@ -62,11 +96,8 @@ function Detail() {
         <p className="text-muted text-sm">{status.description}</p>
         <Money value={d.amount_mnt} className="block text-3xl font-bold" />
         <TestPaymentNotice />
-        {d.status === "DELIVERED" && d.auto_release_at ? (
-          <Alert tone="info">
-            Шалгах хугацаа <strong>{formatDateTime(d.auto_release_at)}</strong>-д дуусна. Тэр хүртэл асуудал
-            мэдэгдээгүй бол мөнгө худалдагчид автоматаар шилжинэ.
-          </Alert>
+        {d.status === "DELIVERED" && d.inspection_ends_at ? (
+          <InspectionNotice deal={d} endsAt={d.inspection_ends_at} />
         ) : null}
         {d.dispute_id ? (
           <ButtonLink href={`/disputes/${d.dispute_id}`} variant="secondary" className="w-full">
