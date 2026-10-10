@@ -115,7 +115,7 @@ function Detail() {
       ) : null}
 
       <Card aria-label="Гэрээний тойм" className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <StatusBadge status={d.status} />
@@ -129,7 +129,7 @@ function Detail() {
         <DealProgress status={d.status} />
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
         <div className="space-y-4">
           <NextStepPanel step={step}>
             {d.status === "DELIVERED" && d.inspection_ends_at ? (

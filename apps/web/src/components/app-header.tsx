@@ -30,7 +30,7 @@ function DesktopNav() {
   const pathname = usePathname();
   if (isAdminPath(pathname)) {
     return (
-      <span className="bg-warning-soft text-warning border-warning-border rounded-full border px-3 py-1 text-xs font-semibold">
+      <span className="bg-warning-soft text-warning border-warning-border hidden rounded-full border px-3 py-1 text-xs font-semibold whitespace-nowrap sm:inline-block">
         Админ горим
       </span>
     );

@@ -28,12 +28,12 @@ function Content() {
           ].map(([label, n]) => (
             <Card key={label} as="div" className="p-3 sm:p-4">
               <div className="text-2xl font-bold tabular-nums sm:text-3xl">{n}</div>
-              <div className="text-muted text-[13px] leading-snug">{label}</div>
+              <div className="text-muted text-xs leading-snug [overflow-wrap:anywhere] sm:text-[13px]">{label}</div>
             </Card>
           ))}
         </div>
       ) : null}
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
         <section aria-labelledby="queue-title" className="space-y-3">
           <h2 id="queue-title" className="text-base font-semibold">
             Маргааны жагсаалт

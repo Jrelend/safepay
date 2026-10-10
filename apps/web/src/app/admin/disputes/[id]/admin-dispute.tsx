@@ -81,7 +81,7 @@ function Content() {
           {d.decision_reason}
         </Alert>
       ) : null}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="space-y-4">
           <Card className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">

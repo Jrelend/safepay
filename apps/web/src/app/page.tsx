@@ -45,7 +45,7 @@ function ExampleDeal() {
 export default function HomePage() {
   return (
     <div className="space-y-14 md:space-y-20">
-      <section className="grid items-center gap-8 md:grid-cols-[1.1fr_1fr] md:gap-12 md:pt-6">
+      <section className="grid grid-cols-1 items-center gap-8 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] md:gap-12 md:pt-6">
         <div className="space-y-5">
           <span className="bg-brand-soft text-brand inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold">
             <Icon name="shieldCheck" className="size-4" />
@@ -74,7 +74,7 @@ export default function HomePage() {
         <h2 id="steps-title" className="text-xl font-bold tracking-tight sm:text-2xl">
           {mn.steps.title}
         </h2>
-        <ol className="grid gap-3 md:grid-cols-3">
+        <ol className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {mn.steps.items.map((step, i) => (
             <li key={step.title} className="bg-surface border-border shadow-card rounded-2xl border p-5">
               <div className="flex items-center gap-3">
@@ -94,7 +94,7 @@ export default function HomePage() {
         <h2 id="safety-title" className="text-xl font-bold tracking-tight sm:text-2xl">
           {mn.safety.title}
         </h2>
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {mn.safety.items.map((item) => (
             <li
               key={item}

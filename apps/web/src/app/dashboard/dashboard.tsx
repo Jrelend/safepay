@@ -26,13 +26,15 @@ function Content({ me }: { me: Me }) {
           <p className="text-muted text-sm">Сайн байна уу,</p>
           <h1 className="text-2xl font-bold tracking-tight sm:text-[28px]">{me.display_name}</h1>
         </div>
-        <ButtonLink href="/deals/new" className="hidden md:inline-flex">
-          <Icon name="plus" className="size-4" />
-          Шинэ гэрээ
-        </ButtonLink>
+        <div className="hidden md:block">
+          <ButtonLink href="/deals/new">
+            <Icon name="plus" className="size-4" />
+            Шинэ гэрээ
+          </ButtonLink>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
         <div className="space-y-6">
           <section className="space-y-3" aria-labelledby="todo-title">
             <h2 id="todo-title" className="flex items-center gap-2 text-base font-semibold">

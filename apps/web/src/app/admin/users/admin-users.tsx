@@ -56,7 +56,7 @@ function Content() {
       {users.data && users.data.length === 0 ? (
         <EmptyState icon="users" title="Хэрэглэгч олдсонгүй" body="Өөр имэйл эсвэл нэрээр хайна уу." />
       ) : null}
-      <ul className="grid gap-2 md:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">
         {users.data?.map((u) => (
           <li key={u.id}>
             <Card className="space-y-2">

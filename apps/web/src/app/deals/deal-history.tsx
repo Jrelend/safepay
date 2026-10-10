@@ -33,10 +33,12 @@ function List() {
       <PageTitle
         title="Миний гэрээнүүд"
         actions={
-          <ButtonLink href="/deals/new" size="sm" className="hidden md:inline-flex">
-            <Icon name="plus" className="size-4" />
-            Шинэ гэрээ
-          </ButtonLink>
+          <div className="hidden md:block">
+            <ButtonLink href="/deals/new" size="sm">
+              <Icon name="plus" className="size-4" />
+              Шинэ гэрээ
+            </ButtonLink>
+          </div>
         }
       />
       <div className="mb-4">
