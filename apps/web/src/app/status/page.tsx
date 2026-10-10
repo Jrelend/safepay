@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: mn.system.title };
 
 function Row({ label, ok, detail }: { label: string; ok: boolean | null; detail?: string | null }) {
   const text = ok === null ? mn.system.checking : ok ? mn.system.ok : mn.system.down;
-  const dot = ok === null ? "bg-slate-400" : ok ? "bg-emerald-500" : "bg-rose-500";
+  const dot = ok === null ? "bg-border-strong" : ok ? "bg-success" : "bg-danger";
   return (
     <li className="flex items-start justify-between gap-3 p-4">
       <div>
@@ -45,11 +45,7 @@ async function SystemChecks() {
         detail={`${health.body.service} v${health.body.version} · ${health.body.environment}`}
       />
       <Row label={mn.system.database} ok={checks.database?.ok ?? false} />
-      <Row
-        label={mn.system.migrations}
-        ok={checks.migrations?.ok ?? false}
-        detail={checks.migrations?.detail}
-      />
+      <Row label={mn.system.migrations} ok={checks.migrations?.ok ?? false} detail={checks.migrations?.detail} />
     </>
   );
 }
@@ -66,7 +62,7 @@ function Pending() {
 
 export default function StatusPage() {
   return (
-    <div className="space-y-4">
+    <div className="mx-auto w-full max-w-md space-y-4">
       <h1 className="text-2xl font-bold">{mn.system.title}</h1>
       <ul className="bg-surface border-border divide-border divide-y rounded-2xl border">
         <Suspense fallback={<Pending />}>

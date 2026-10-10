@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, Field, PageTitle } from "@/components/ui";
+import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 
 export function ForgotPasswordForm() {
@@ -27,7 +27,7 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.narrow}>
       <PageTitle title="Нууц үг сэргээх" back="/login" />
       {sent ? (
         <Alert tone="success" title="Хүсэлт хүлээн авлаа">

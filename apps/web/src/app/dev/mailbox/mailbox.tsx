@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, EmptyState, Field, PageTitle, Skeleton } from "@/components/ui";
+import { Alert, Button, Card, EmptyState, Field, PageTitle, Skeleton, WIDTH } from "@/components/ui";
 import { useApi } from "@/lib/client/use-api";
 import { formatDateTime } from "@/lib/format";
 
@@ -37,7 +37,7 @@ export function Mailbox() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className={`${WIDTH.form} space-y-4`}>
       <PageTitle
         title="Туршилтын шуудан"
         subtitle="Зөвхөн орон нутгийн хөгжүүлэлтэд. Бодит имэйл илгээгддэггүй тул энд харагдана."
@@ -68,7 +68,10 @@ export function Mailbox() {
             <div className="font-medium">{TEMPLATE[mail.template] ?? mail.template}</div>
             <div className="text-muted text-sm break-all">{mail.to_email}</div>
             {link ? (
-              <a href={localPath(link)} className="text-brand inline-block min-h-10 content-center text-sm font-semibold">
+              <a
+                href={localPath(link)}
+                className="text-brand inline-block min-h-10 content-center text-sm font-semibold"
+              >
                 Холбоосыг нээх →
               </a>
             ) : null}
