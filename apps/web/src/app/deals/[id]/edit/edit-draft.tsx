@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { DealTermsFields, readTerms } from "@/components/deal-terms-fields";
-import { Alert, Button, Card, PageTitle, Skeleton } from "@/components/ui";
+import { Alert, Button, Card, PageTitle, Skeleton, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { useApi } from "@/lib/client/use-api";
 import type { Deal } from "@/lib/types";
@@ -47,7 +47,7 @@ function Form() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.form}>
       <PageTitle title="Нөхцөл засах" subtitle={d.reference} back={`/deals/${id}`} />
       <form onSubmit={onSubmit} className="space-y-4">
         <Card className="space-y-4">

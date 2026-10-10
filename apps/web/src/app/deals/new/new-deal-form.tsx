@@ -1,16 +1,41 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { DealTermsFields, readTerms } from "@/components/deal-terms-fields";
-import { Alert, Button, Card, Field, PageTitle } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
+import { focusFirstInvalid } from "@/lib/client/focus";
 import type { Deal, Role } from "@/lib/types";
+
+const ROLES: { value: Role; title: string; body: string }[] = [
+  { value: "SELLER", title: "Худалдагч", body: "Би бараа, үйлчилгээ өгч, мөнгө хүлээн авна." },
+  { value: "BUYER", title: "Худалдан авагч", body: "Би төлбөр байршуулж, бараагаа хүлээн авна." },
+];
+
+function Section({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <Card className="space-y-4">
+      <h2 className="flex items-center gap-2.5 text-base font-semibold">
+        <span
+          aria-hidden
+          className="bg-primary text-primary-foreground grid size-6 place-items-center rounded-full text-xs"
+        >
+          {n}
+        </span>
+        {title}
+      </h2>
+      {children}
+    </Card>
+  );
+}
 
 function Form() {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [role, setRole] = useState<Role>("SELLER");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +46,10 @@ function Form() {
     const form = new FormData(e.currentTarget);
     const { terms, errors: fieldErrors } = readTerms(form);
     setErrors(fieldErrors);
-    if (Object.keys(fieldErrors).length) return;
+    if (Object.keys(fieldErrors).length) {
+      focusFirstInvalid(formRef.current);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -37,48 +65,72 @@ function Form() {
     }
   }
 
+  const other = role === "SELLER" ? "Худалдан авагчийн" : "Худалдагчийн";
+
   return (
-    <div>
-      <PageTitle title="Шинэ гэрээ" subtitle="Нөхцөлөө бичээд нөгөө талдаа урилга илгээнэ." back="/dashboard" />
-      <form onSubmit={onSubmit} className="space-y-4">
-        <Card className="space-y-3">
+    <div className={WIDTH.form}>
+      <PageTitle
+        title="Шинэ гэрээ"
+        subtitle="Нөхцөлөө бичээд нөгөө талдаа урилга илгээнэ. Хоёр тал зөвшөөрөх хүртэл мөнгө хөдлөхгүй."
+        back="/dashboard"
+      />
+      <form ref={formRef} onSubmit={onSubmit} className="space-y-4">
+        <Section n={1} title="Таны үүрэг">
           <fieldset>
-            <legend className="mb-2 text-sm font-medium">Би энэ гэрээнд</legend>
-            <div className="grid grid-cols-2 gap-2">
-              {(["SELLER", "BUYER"] as const).map((r) => (
-                <label
-                  key={r}
-                  className={`flex min-h-12 cursor-pointer items-center justify-center rounded-xl border text-sm font-medium ${
-                    role === r ? "border-brand bg-brand-soft text-brand" : "border-border"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="my_role"
-                    value={r}
-                    checked={role === r}
-                    onChange={() => setRole(r)}
-                    className="sr-only"
-                  />
-                  {r === "SELLER" ? "Худалдагч" : "Худалдан авагч"}
-                </label>
-              ))}
+            <legend className="sr-only">Би энэ гэрээнд</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {ROLES.map((r) => {
+                const selected = role === r.value;
+                return (
+                  <label
+                    key={r.value}
+                    className={`relative flex min-h-16 cursor-pointer items-start gap-3 rounded-xl border-2 p-3 transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus ${
+                      selected ? "border-primary bg-surface-muted" : "border-border hover:border-border-strong"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="my_role"
+                      value={r.value}
+                      checked={selected}
+                      onChange={() => setRole(r.value)}
+                      className="sr-only"
+                    />
+                    <span
+                      aria-hidden
+                      className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border-2 ${
+                        selected ? "border-primary bg-primary text-primary-foreground" : "border-border-strong"
+                      }`}
+                    >
+                      {selected ? <Icon name="check" className="size-3" /> : null}
+                    </span>
+                    <span>
+                      <span className={`block text-sm ${selected ? "font-bold" : "font-semibold"}`}>{r.title}</span>
+                      <span className="text-muted block text-[13px] leading-snug">{r.body}</span>
+                    </span>
+                  </label>
+                );
+              })}
             </div>
           </fieldset>
-        </Card>
-        <Card className="space-y-4">
+        </Section>
+        <Section n={2} title="Юу, хэдээр, яаж">
           <DealTermsFields errors={errors} />
-        </Card>
-        <Card className="space-y-2">
+        </Section>
+        <Section n={3} title="Хэнтэй (заавал биш)">
           <Field
-            label={role === "SELLER" ? "Худалдан авагчийн имэйл (заавал биш)" : "Худалдагчийн имэйл (заавал биш)"}
+            label={`${other} имэйл (заавал биш)`}
             name="counterparty_email"
             type="email"
             autoComplete="off"
             hint="Бичвэл урилгын холбоосоор зөвхөн энэ имэйлээр бүртгэлтэй хүн нэгдэж чадна."
           />
-        </Card>
+        </Section>
         {error ? <Alert tone="danger">{error}</Alert> : null}
+        <div className="bg-surface-muted text-muted flex gap-2 rounded-xl p-3 text-[13px] leading-snug">
+          <Icon name="info" className="mt-0.5 size-4" />
+          Гэрээ ноорог байдлаар үүснэ. Дараа нь нөхцөлөө шалгаж, нөгөө талдаа илгээнэ.
+        </div>
         <Button type="submit" loading={busy} className="w-full">
           Гэрээ үүсгэх
         </Button>
