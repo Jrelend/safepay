@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { AuthGuard } from "@/components/auth-guard";
-import { Alert, Button, Card, Field, PageTitle, Skeleton } from "@/components/ui";
+import { Alert, Button, Card, CardTitle, Field, PageTitle, Skeleton, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { useApi } from "@/lib/client/use-api";
 import { formatDateTime } from "@/lib/format";
@@ -60,13 +60,19 @@ function Content() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className={`${WIDTH.form} space-y-4`}>
       <PageTitle title="Аюулгүй байдал" back="/profile" />
       {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
-      <Card>
-        <h2 className="mb-3 font-semibold">Нууц үг солих</h2>
+      <Card aria-labelledby="password-title">
+        <CardTitle id="password-title">Нууц үг солих</CardTitle>
         <form onSubmit={changePassword} className="space-y-4">
-          <Field label="Одоогийн нууц үг" name="current_password" type="password" required autoComplete="current-password" />
+          <Field
+            label="Одоогийн нууц үг"
+            name="current_password"
+            type="password"
+            required
+            autoComplete="current-password"
+          />
           <Field
             label="Шинэ нууц үг"
             name="new_password"
@@ -82,15 +88,16 @@ function Content() {
           </Button>
         </form>
       </Card>
-      <Card className="space-y-3">
-        <h2 className="font-semibold">Нэвтэрсэн төхөөрөмжүүд</h2>
+      <Card aria-labelledby="sessions-title" className="space-y-3">
+        <CardTitle id="sessions-title">Нэвтэрсэн төхөөрөмжүүд</CardTitle>
         {sessions.loading && !sessions.data ? <Skeleton lines={2} /> : null}
         <ul className="divide-border divide-y">
           {sessions.data?.map((s) => (
             <li key={s.id} className="flex items-center justify-between gap-3 py-3">
               <div className="min-w-0 text-sm">
                 <div className="font-medium">
-                  {device(s.user_agent)} {s.current ? <span className="text-brand">(энэ төхөөрөмж)</span> : null}
+                  {device(s.user_agent)}{" "}
+                  {s.current ? <span className="text-success text-xs font-semibold">· энэ төхөөрөмж</span> : null}
                 </div>
                 <div className="text-muted text-xs">
                   {s.ip_address} · сүүлд {formatDateTime(s.last_seen_at)}
@@ -98,7 +105,8 @@ function Content() {
               </div>
               {!s.current ? (
                 <Button
-                  variant="ghost"
+                  variant="dangerOutline"
+                  size="sm"
                   loading={busy === s.id}
                   onClick={() => run(s.id, () => api(`/auth/sessions/${s.id}`, { method: "DELETE" }))}
                 >

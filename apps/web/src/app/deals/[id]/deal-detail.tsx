@@ -1,17 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ActionDialog } from "@/components/action-dialog";
 import { AuthGuard } from "@/components/auth-guard";
+import { DealProgress, MoneyLocation, NextStepPanel } from "@/components/deal-flow-ui";
+import { Icon } from "@/components/icons";
 import { StatusBadge } from "@/components/status-badge";
 import { TestPaymentNotice } from "@/components/test-payment-notice";
-import { Alert, Button, ButtonLink, Card, DefinitionList, Money, PageTitle, Skeleton } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  ButtonLink,
+  Card,
+  CardTitle,
+  DefinitionList,
+  Money,
+  PageTitle,
+  Skeleton,
+} from "@/components/ui";
 import { useApi } from "@/lib/client/use-api";
 import { ACTION_META, ACTOR_LABEL, timelineLabel } from "@/lib/deal-actions";
-import { DEAL_STATUS_META } from "@/lib/deal-status";
+import { nextStep, splitActions } from "@/lib/deal-flow";
 import { DELIVERY_LABEL, ITEM_TYPE_LABEL, ROLE_LABEL, formatDateTime } from "@/lib/format";
 import type { Deal, DealAction, Posting, TimelineEvent } from "@/lib/types";
 
@@ -27,8 +38,8 @@ function InspectionNotice({ deal, endsAt }: { deal: Deal; endsAt: string }) {
   if (deal.auto_release_at) {
     return (
       <Alert tone="info">
-        Шалгах хугацаа <strong>{formatDateTime(deal.auto_release_at)}</strong>-д дуусна. Тэр хүртэл асуудал
-        мэдэгдээгүй бол мөнгө худалдагчид автоматаар шилжинэ.
+        Шалгах хугацаа <strong>{formatDateTime(deal.auto_release_at)}</strong>-д дуусна. Тэр хүртэл асуудал мэдэгдээгүй
+        бол мөнгө худалдагчид автоматаар шилжинэ.
       </Alert>
     );
   }
@@ -39,14 +50,8 @@ function InspectionNotice({ deal, endsAt }: { deal: Deal; endsAt: string }) {
           Шалгах хугацаа <strong>{formatDateTime(endsAt)}</strong>-д дуусна.{" "}
         </>
       )}
-      Мөнгө барьцаанд хэвээр байна: зөвхөн худалдан авагч хүлээн авснаа баталсан эсвэл SafePay ажилтан
-      маргааныг шийдвэрлэсний дараа шилжинэ. Хугацаа дуусахад автоматаар шилжихгүй.
-      {ended && deal.my_role === "SELLER"
-        ? " Худалдан авагч хариу өгөхгүй байвал «Маргаан нээх» товчоор SafePay-д хандана уу."
-        : ""}
-      {ended && deal.my_role === "BUYER"
-        ? " Бараа зүгээр бол хүлээн авснаа батална уу, асуудалтай бол маргаан нээнэ үү."
-        : ""}
+      Хугацаа дуусахад мөнгө автоматаар шилжихгүй.
+      {ended && deal.my_role === "SELLER" ? " Худалдан авагч хариу өгөхгүй бол маргаан нээж SafePay-д хандана уу." : ""}
     </Alert>
   );
 }
@@ -57,6 +62,14 @@ const POSTING_LABEL: Record<string, string> = {
   ESCROW_REFUND: "Худалдан авагчид буцсан",
 };
 
+/** Why you would take each way out, in one line. */
+const ISSUE_HELP: Partial<Record<DealAction, string>> = {
+  OPEN_DISPUTE: "Бараа ирээгүй, тохирохгүй бол. Мөнгө барьцаанд түгжигдэж, SafePay ажилтан шийднэ.",
+  REFUND: "Гэрээг биелүүлэх боломжгүй бол мөнгийг худалдан авагчид бүтнээр нь буцаана.",
+  DECLINE: "Нөхцөл тохирохгүй бол татгалзана. Гэрээ цуцлагдана.",
+  CANCEL: "Төлбөр байршуулахаас өмнө гэрээг цуцална. Мөнгө хөдлөхгүй.",
+};
+
 function Detail() {
   const { id } = useParams<{ id: string }>();
   const created = useSearchParams().get("created");
@@ -65,9 +78,13 @@ function Detail() {
   const postings = useApi<Posting[]>(`/deals/${id}/escrow`);
   const [pending, setPending] = useState<DealAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [inviteUrl] = useState(() =>
-    typeof window === "undefined" ? null : sessionStorage.getItem(`invite:${id}`),
-  );
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const [inviteUrl] = useState(() => (typeof window === "undefined" ? null : sessionStorage.getItem(`invite:${id}`)));
+
+  // After an action, bring the confirmation into view and announce it.
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus();
+  }, [notice]);
 
   if (deal.loading && !deal.data) return <Skeleton lines={4} />;
   if (deal.error || !deal.data) {
@@ -79,109 +96,163 @@ function Detail() {
     );
   }
   const d = deal.data;
-  const status = DEAL_STATUS_META[d.status];
+  const step = nextStep(d);
+  const { primary, issue } = splitActions(d.actions);
   const awaitingCounterparty = !d.counterparty_name && (d.status === "DRAFT" || d.status === "PENDING_ACCEPTANCE");
+  const open = (a: DealAction) => {
+    setNotice(null);
+    setPending(a);
+  };
 
   return (
     <div className="space-y-4">
       <PageTitle title={d.title} subtitle={`${d.reference} · Та: ${ROLE_LABEL[d.my_role]}`} back="/deals" />
       {created ? <Alert tone="success">Гэрээ үүслээ. Одоо нөгөө талыг урина уу.</Alert> : null}
-      {notice ? <Alert tone="success">{notice}</Alert> : null}
+      {notice ? (
+        <Alert tone="success" focusRef={noticeRef}>
+          {notice}
+        </Alert>
+      ) : null}
 
-      <Card className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <StatusBadge status={d.status} />
-          <span className="text-muted text-xs">{formatDateTime(d.status_changed_at)}</span>
+      <Card aria-label="Гэрээний тойм" className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <StatusBadge status={d.status} />
+              <span className="text-muted text-xs">{formatDateTime(d.status_changed_at)}</span>
+            </div>
+            <Money value={d.amount_mnt} className="block text-[32px] leading-tight font-bold tracking-tight" />
+            <TestPaymentNotice />
+          </div>
+          <MoneyLocation status={d.status} />
         </div>
-        <p className="text-muted text-sm">{status.description}</p>
-        <Money value={d.amount_mnt} className="block text-3xl font-bold" />
-        <TestPaymentNotice />
-        {d.status === "DELIVERED" && d.inspection_ends_at ? (
-          <InspectionNotice deal={d} endsAt={d.inspection_ends_at} />
-        ) : null}
-        {d.dispute_id ? (
-          <ButtonLink href={`/disputes/${d.dispute_id}`} variant="secondary" className="w-full">
-            Маргааны дэлгэрэнгүй
-          </ButtonLink>
-        ) : null}
+        <DealProgress status={d.status} />
       </Card>
 
-      {d.actions.length > 0 ? (
-        <section aria-label="Үйлдлүүд" className="grid gap-2">
-          {d.actions.map((a) => (
-            <Button
-              key={a}
-              variant={ACTION_META[a].variant}
-              onClick={() => {
-                setNotice(null);
-                setPending(a);
-              }}
-              className="w-full"
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+        <div className="space-y-4">
+          <NextStepPanel step={step}>
+            {d.status === "DELIVERED" && d.inspection_ends_at ? (
+              <InspectionNotice deal={d} endsAt={d.inspection_ends_at} />
+            ) : null}
+            {primary.length > 0 ? (
+              <div className="grid gap-2 sm:flex sm:flex-wrap">
+                {primary.map((a) => (
+                  <Button key={a} onClick={() => open(a)} className="w-full sm:w-auto">
+                    {ACTION_META[a].label}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+            {d.status === "DRAFT" && d.created_by_me ? (
+              <ButtonLink href={`/deals/${d.id}/edit`} variant="secondary" className="w-full sm:w-auto">
+                Нөхцөл засах
+              </ButtonLink>
+            ) : null}
+            {d.dispute_id ? (
+              <ButtonLink href={`/disputes/${d.dispute_id}`} variant="secondary" className="w-full sm:w-auto">
+                Маргааны дэлгэрэнгүй
+              </ButtonLink>
+            ) : null}
+          </NextStepPanel>
+
+          {awaitingCounterparty && d.created_by_me ? <InviteBox dealId={d.id} initialUrl={inviteUrl} /> : null}
+
+          {issue.length > 0 ? (
+            <section
+              aria-labelledby="issue-title"
+              className="border-border space-y-3 rounded-2xl border border-dashed p-4 sm:p-5"
             >
-              {ACTION_META[a].label}
-            </Button>
-          ))}
-        </section>
-      ) : null}
+              <h2 id="issue-title" className="flex items-center gap-2 text-base font-semibold">
+                <Icon name="alert" className="text-muted size-[18px]" />
+                Асуудал гарсан уу?
+              </h2>
+              <ul className="space-y-3">
+                {issue.map((a) => (
+                  <li key={a} className="space-y-2 sm:flex sm:items-center sm:justify-between sm:gap-4 sm:space-y-0">
+                    <p className="text-muted text-sm">{ISSUE_HELP[a]}</p>
+                    <Button
+                      variant={a === "REFUND" ? "secondary" : "dangerOutline"}
+                      size="sm"
+                      onClick={() => open(a)}
+                      className="w-full shrink-0 sm:w-auto"
+                    >
+                      {ACTION_META[a].label}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
-      {d.status === "DRAFT" && d.created_by_me ? (
-        <ButtonLink href={`/deals/${d.id}/edit`} variant="secondary" className="w-full">
-          Нөхцөл засах
-        </ButtonLink>
-      ) : null}
+          <Card aria-labelledby="terms-title">
+            <CardTitle id="terms-title">Гэрээний нөхцөл</CardTitle>
+            <DefinitionList
+              items={[
+                ["Төрөл", ITEM_TYPE_LABEL[d.item_type]],
+                ["Хүлээлгэн өгөх", DELIVERY_LABEL[d.delivery_method]],
+                ["Шалгах хугацаа", `${d.inspection_days} хоног`],
+                [d.my_role === "BUYER" ? "Худалдагч" : "Худалдан авагч", d.counterparty_name ?? "Нэгдээгүй"],
+                ...(d.counterparty_phone ? [["Утас (баталгаажаагүй)", d.counterparty_phone] as [string, string]] : []),
+                ["Таны зөвшөөрөл", <Consent key="me" ok={d.my_accepted} />],
+                ["Нөгөө талын зөвшөөрөл", <Consent key="them" ok={d.counterparty_accepted} />],
+                ["Үүсгэсэн", formatDateTime(d.created_at)],
+              ]}
+            />
+            {d.description ? (
+              <div className="border-border mt-2 border-t pt-3">
+                <div className="text-muted mb-1 text-xs font-medium">Тайлбар</div>
+                <p className="text-sm whitespace-pre-wrap">{d.description}</p>
+              </div>
+            ) : null}
+          </Card>
+        </div>
 
-      {awaitingCounterparty && d.created_by_me ? <InviteBox dealId={d.id} initialUrl={inviteUrl} /> : null}
+        <div className="space-y-4">
+          {postings.data && postings.data.length > 0 ? (
+            <Card aria-labelledby="postings-title">
+              <CardTitle id="postings-title">Барьцааны гүйлгээ (туршилт)</CardTitle>
+              <ul className="divide-border divide-y text-sm">
+                {postings.data.map((p) => (
+                  <li key={`${p.kind}-${p.created_at}`} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="font-medium">{`${POSTING_LABEL[p.kind] ?? p.kind} · ${formatDateTime(p.created_at)}`}</div>
+                    </div>
+                    <Money value={p.amount_mnt} className="font-semibold" />
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ) : null}
 
-      <Card>
-        <h2 className="mb-1 font-semibold">Нөхцөл</h2>
-        <DefinitionList
-          items={[
-            ["Төрөл", ITEM_TYPE_LABEL[d.item_type]],
-            ["Хүлээлгэн өгөх", DELIVERY_LABEL[d.delivery_method]],
-            ["Шалгах хугацаа", `${d.inspection_days} хоног`],
-            [d.my_role === "BUYER" ? "Худалдагч" : "Худалдан авагч", d.counterparty_name ?? "Нэгдээгүй"],
-            ...(d.counterparty_phone ? [["Утас (баталгаажаагүй)", d.counterparty_phone] as [string, string]] : []),
-            ["Таны зөвшөөрөл", d.my_accepted ? "Зөвшөөрсөн ✓" : "Хүлээгдэж буй"],
-            ["Нөгөө талын зөвшөөрөл", d.counterparty_accepted ? "Зөвшөөрсөн ✓" : "Хүлээгдэж буй"],
-            ["Үүсгэсэн", formatDateTime(d.created_at)],
-          ]}
-        />
-        {d.description ? <p className="mt-3 text-sm whitespace-pre-wrap">{d.description}</p> : null}
-      </Card>
-
-      {postings.data && postings.data.length > 0 ? (
-        <Card>
-          <h2 className="mb-1 font-semibold">Барьцааны гүйлгээ (туршилт)</h2>
-          <DefinitionList
-            items={postings.data.map((p) => [
-              `${POSTING_LABEL[p.kind] ?? p.kind} · ${formatDateTime(p.created_at)}`,
-              <Money key={p.created_at} value={p.amount_mnt} />,
-            ])}
-          />
-        </Card>
-      ) : null}
-
-      <Card>
-        <h2 className="mb-3 font-semibold">Түүх</h2>
-        {timeline.loading && !timeline.data ? <Skeleton lines={2} /> : null}
-        <ol className="border-border space-y-4 border-l pl-4">
-          {timeline.data
-            ?.slice()
-            .reverse()
-            .map((e, i) => (
-              <li key={`${e.occurred_at}-${i}`} className="relative">
-                <span aria-hidden className="bg-brand absolute top-1.5 -left-[21px] size-2.5 rounded-full" />
-                <div className="text-sm font-medium">{timelineLabel(e.action, e.data)}</div>
-                <div className="text-muted text-xs">
-                  {ACTOR_LABEL[e.actor] ?? e.actor} · {formatDateTime(e.occurred_at)}
-                </div>
-                {typeof e.data.reason === "string" && e.data.reason ? (
-                  <div className="text-muted mt-1 text-xs">“{e.data.reason}”</div>
-                ) : null}
-              </li>
-            ))}
-        </ol>
-      </Card>
+          <Card aria-labelledby="timeline-title">
+            <CardTitle id="timeline-title">Гэрээний түүх</CardTitle>
+            {timeline.loading && !timeline.data ? <Skeleton lines={2} /> : null}
+            <ol className="space-y-0">
+              {timeline.data
+                ?.slice()
+                .reverse()
+                .map((e, i, all) => (
+                  <li key={`${e.occurred_at}-${i}`} className="relative flex gap-3 pb-4 last:pb-0">
+                    <span aria-hidden className="relative flex w-3 shrink-0 justify-center">
+                      <span className={`mt-1.5 size-2.5 rounded-full ${i === 0 ? "bg-success" : "bg-border-strong"}`} />
+                      {i < all.length - 1 ? <span className="bg-border absolute top-5 -bottom-1 w-px" /> : null}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{timelineLabel(e.action, e.data)}</div>
+                      <div className="text-muted text-xs">
+                        {ACTOR_LABEL[e.actor] ?? e.actor} · {formatDateTime(e.occurred_at)}
+                      </div>
+                      {typeof e.data.reason === "string" && e.data.reason ? (
+                        <div className="text-muted mt-1 text-xs break-words">“{e.data.reason}”</div>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+            </ol>
+          </Card>
+        </div>
+      </div>
 
       {pending ? (
         <ActionDialog
@@ -197,10 +268,18 @@ function Detail() {
           }}
         />
       ) : null}
-      <Link href="/deals" className="text-brand block text-center text-sm">
-        Бүх гэрээ
-      </Link>
     </div>
+  );
+}
+
+function Consent({ ok }: { ok: boolean }) {
+  return ok ? (
+    <span className="text-success inline-flex items-center gap-1">
+      <Icon name="check" className="size-4" />
+      Зөвшөөрсөн
+    </span>
+  ) : (
+    <span className="text-muted">Хүлээгдэж буй</span>
   );
 }
 

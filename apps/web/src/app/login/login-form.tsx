@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, Field, PageTitle } from "@/components/ui";
+import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { safeNext, useSession } from "@/lib/client/session";
 import type { Me } from "@/lib/types";
@@ -38,7 +38,7 @@ export function LoginForm() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.narrow}>
       <PageTitle title="Нэвтрэх" subtitle="Гэрээнүүдээ удирдахын тулд нэвтэрнэ үү." />
       {params.get("verified") ? (
         <div className="mb-4">

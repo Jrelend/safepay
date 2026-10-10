@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
-import { Alert, Button, PageTitle } from "@/components/ui";
+import { Alert, Button, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { useSession } from "@/lib/client/session";
 
@@ -30,7 +30,7 @@ export function VerifyEmail() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className={`${WIDTH.narrow} space-y-4`}>
       <PageTitle title="Имэйл баталгаажуулах" />
       {!token ? (
         <Alert tone="danger">Холбоос дутуу байна. Имэйл дэх холбоосыг бүтнээр нь нээнэ үү.</Alert>
