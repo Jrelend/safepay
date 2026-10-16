@@ -2,7 +2,7 @@
 # shellcheck source-path=SCRIPTDIR
 # Post-deploy checks, run ON the server after scripts/staging-wait.sh:
 #   * only caddy publishes ports, and only 80/443; internal ports are closed on the host
-#   * HTTP redirects to HTTPS; HTTPS answers with the basic-auth challenge
+#   * both hosts (web + API): HTTP redirects to HTTPS; HTTPS answers with basic auth
 #   * with Let's Encrypt (CADDY_TLS=<email>) the certificate must validate
 #   * API readiness: database, migrations at the code's head, least-privileged role
 #   * simulation-only payments and disabled automatic release
@@ -33,16 +33,18 @@ for port in 3000 5432 8000; do
 done
 ok "only caddy publishes 80/443; 3000/5432/8000 closed on the host"
 
-# 2. Edge behaviour (connect locally, present the real hostname).
-code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 -H "Host: $STAGING_DOMAIN" http://127.0.0.1/)"
-[[ "$code" == "308" ]] || fail "http:// returned $code, expected 308 redirect"
+# 2. Edge behaviour for both hosts (connect locally, present the real hostname).
 tls_opts=(-k)
 if [[ "$CADDY_TLS" != "internal" ]]; then tls_opts=(); fi
-code="$(curl -s --noproxy '*' "${tls_opts[@]}" -o /dev/null -w '%{http_code}' --max-time 15 \
-  --resolve "$STAGING_DOMAIN:443:127.0.0.1" "https://$STAGING_DOMAIN/")" \
-  || fail "HTTPS request failed (certificate not issued or not trusted yet?)"
-[[ "$code" == "401" ]] || fail "https:// returned $code, expected 401 (basic auth)"
-ok "HTTP->HTTPS redirect and basic auth in front of the site (tls: $CADDY_TLS)"
+for host in "$STAGING_DOMAIN" "$STAGING_API_DOMAIN"; do
+  code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 -H "Host: $host" http://127.0.0.1/)"
+  [[ "$code" == "308" ]] || fail "http://$host returned $code, expected 308 redirect"
+  code="$(curl -s --noproxy '*' "${tls_opts[@]}" -o /dev/null -w '%{http_code}' --max-time 15 \
+    --resolve "$host:443:127.0.0.1" "https://$host/")" \
+    || fail "HTTPS request to $host failed (certificate not issued or not trusted yet?)"
+  [[ "$code" == "401" ]] || fail "https://$host returned $code, expected 401 (basic auth)"
+done
+ok "HTTP->HTTPS redirect and basic auth on $STAGING_DOMAIN and $STAGING_API_DOMAIN (tls: $CADDY_TLS)"
 
 # 3. Readiness from inside the internal network.
 dc exec -T api python -c "

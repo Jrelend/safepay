@@ -1,5 +1,12 @@
 # SafePay private STAGING edge (HTTPS only). All payments are simulated.
 # Values come from the caddy service environment (see compose.staging.yaml).
+# Two sites, one certificate each (automatic HTTPS: Let's Encrypt via HTTP-01/TLS-ALPN-01,
+# or Caddy's internal CA):
+#   {$STAGING_DOMAIN}      the web app; browsers call the API same-origin under /api/*
+#   {$STAGING_API_DOMAIN}  the public API for non-browser clients (same API process, same
+#                          app-level CSRF/Origin checks; admin API, docs and probes are NOT served)
+# Neither site sets HSTS includeSubDomains or any cookie Domain, so a parent domain
+# (e.g. dhdbot.xyz) and its other sites are not affected.
 {
 	admin off
 	servers {
@@ -53,4 +60,41 @@ http://127.0.0.1:8080 {
 	}
 
 	# No access log: URLs can carry one-time tokens (invites, verification links).
+}
+
+{$STAGING_API_DOMAIN} {
+	tls {$CADDY_TLS}
+
+	# Same private-access layers as the web site.
+	@outside not remote_ip {$ALLOWED_IPS}
+	respond @outside "Forbidden" 403
+
+	# Never on the public API host: the admin API (separate service, reached only via the
+	# web origin with its own allow-list), interactive docs/schema, probes, dev helpers.
+	@not_public path /admin /admin/* /docs /docs/* /redoc /openapi.json /health /ready /dev /dev/*
+	respond @not_public "Not Found" 404
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		Cache-Control "no-store"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	# Straight to the public API (safepay_app role). The client address is set by Caddy,
+	# never taken from the client, so the API's rate limits see the real address.
+	reverse_proxy api:8000 {
+		header_up -Authorization
+		header_up X-Forwarded-For {remote_host}
+	}
 }

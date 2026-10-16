@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Create .env.staging from .env.staging.example with fresh random secrets.
-#   scripts/staging-init-secrets.sh staging.example.mn
+#   scripts/staging-init-secrets.sh <web-domain> [api-domain]
+#   scripts/staging-init-secrets.sh safepay.dhdbot.xyz api.safepay.dhdbot.xyz
+# The API domain defaults to api.<web-domain>.
 # Prints the generated basic-auth password ONCE; store it in your password manager.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${STAGING_ENV_FILE:-$ROOT/.env.staging}"
-DOMAIN="${1:?usage: staging-init-secrets.sh <staging-domain>}"
+DOMAIN="${1:?usage: staging-init-secrets.sh <web-domain> [api-domain]}"
+API_DOMAIN="${2:-api.$DOMAIN}"
 [[ -e "$OUT" ]] && { echo "$OUT already exists; refusing to overwrite" >&2; exit 1; }
 
 rand() { openssl rand -hex 24; }
@@ -15,6 +18,7 @@ BASIC_HASH="$(docker run --rm "${CADDY_IMAGE:-public.ecr.aws/docker/library/cadd
   caddy hash-password --plaintext "$BASIC_PW")"
 
 sed -e "s|^STAGING_DOMAIN=.*|STAGING_DOMAIN=$DOMAIN|" \
+    -e "s|^STAGING_API_DOMAIN=.*|STAGING_API_DOMAIN=$API_DOMAIN|" \
     -e "s|^BASIC_AUTH_HASH=.*|BASIC_AUTH_HASH='$BASIC_HASH'|" \
     -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(rand)|" \
     -e "s|^SAFEPAY_MIGRATOR_PASSWORD=.*|SAFEPAY_MIGRATOR_PASSWORD=$(rand)|" \
