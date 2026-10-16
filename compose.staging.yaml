@@ -2,6 +2,9 @@
 #
 #   scripts/staging-init-secrets.sh            # once: creates .env.staging (chmod 600)
 #   docker compose -f compose.staging.yaml --env-file .env.staging up -d --build
+# On the DigitalOcean VPS use scripts/staging-deploy.sh <git-ref> instead: it backs up,
+# builds images tagged with the commit (IMAGE_TAG) and smoke-tests; see
+# docs/DEPLOY_DIGITALOCEAN.md.
 #
 # Only `caddy` publishes ports (80 -> HTTPS redirect, 443). PostgreSQL, the public
 # API, the admin API, the worker and the web server are reachable only on internal
@@ -64,7 +67,7 @@ services:
   migrate:
     <<: *hardening
     build: ./apps/api
-    image: safepay-api:staging
+    image: safepay-api:${IMAGE_TAG:-staging}
     restart: "no"
     read_only: true
     tmpfs: ["/tmp:mode=1777"]
@@ -81,7 +84,7 @@ services:
 
   api:
     <<: *hardening
-    image: safepay-api:staging
+    image: safepay-api:${IMAGE_TAG:-staging}
     read_only: true
     tmpfs: ["/tmp:mode=1777"]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--workers", "2"]
@@ -98,7 +101,7 @@ services:
 
   admin-api:
     <<: *hardening
-    image: safepay-api:staging
+    image: safepay-api:${IMAGE_TAG:-staging}
     read_only: true
     tmpfs: ["/tmp:mode=1777"]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
@@ -115,7 +118,7 @@ services:
 
   worker:
     <<: *hardening
-    image: safepay-api:staging
+    image: safepay-api:${IMAGE_TAG:-staging}
     read_only: true
     tmpfs: ["/tmp:mode=1777"]
     command: ["python", "-m", "app.worker"]
@@ -137,7 +140,7 @@ services:
   web:
     <<: *hardening
     build: ./apps/web
-    image: safepay-web:staging
+    image: safepay-web:${IMAGE_TAG:-staging}
     read_only: true
     tmpfs: ["/tmp:mode=1777", "/app/.next/cache:mode=1777"]
     environment:

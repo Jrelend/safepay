@@ -19,6 +19,12 @@ load_env() {
   POSTGRES_USER="${POSTGRES_USER:-postgres}"
   POSTGRES_DB="${POSTGRES_DB:-safepay}"
   BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
+  # Images are tagged with the deployed commit (written by staging-deploy.sh), so every
+  # script restarts the version that is actually deployed, and rollbacks can reuse it.
+  if [[ -z "${IMAGE_TAG:-}" && -f "$ROOT/.deploy/image-tag" ]]; then
+    IMAGE_TAG="$(cat "$ROOT/.deploy/image-tag")"
+  fi
+  export IMAGE_TAG="${IMAGE_TAG:-staging}"
   case "$BACKUP_DIR" in /*) ;; *) BACKUP_DIR="$ROOT/${BACKUP_DIR#./}" ;; esac
 }
 
