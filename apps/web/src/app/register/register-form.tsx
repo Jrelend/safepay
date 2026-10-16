@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, Field, PageTitle } from "@/components/ui";
+import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 
 export function RegisterForm() {
@@ -36,11 +36,11 @@ export function RegisterForm() {
 
   if (done) {
     return (
-      <div className="space-y-4">
+      <div className={`${WIDTH.narrow} space-y-4`}>
         <PageTitle title="Имэйлээ шалгана уу" />
         <Alert tone="success" title="Бүртгэлийн хүсэлт хүлээн авлаа">
-          Хэрэв <strong>{done}</strong> хаяг шинэ бол баталгаажуулах холбоос илгээгдсэн. Аль хэдийн бүртгэлтэй
-          бол нэвтрэх заавар очно.
+          Хэрэв <strong>{done}</strong> хаяг шинэ бол баталгаажуулах холбоос илгээгдсэн. Аль хэдийн бүртгэлтэй бол
+          нэвтрэх заавар очно.
         </Alert>
         <p className="text-muted text-sm">
           Beta хувилбарт бодит имэйл илгээхгүй. Орон нутгийн хөгжүүлэлтийн орчинд{" "}
@@ -57,7 +57,7 @@ export function RegisterForm() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.narrow}>
       <PageTitle title="Бүртгүүлэх" subtitle="SafePay-д нэгдэж, худалдаагаа хамгаалаарай." />
       <Card>
         <form onSubmit={onSubmit} className="space-y-4" noValidate={false}>

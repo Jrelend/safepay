@@ -4,10 +4,23 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { Icon } from "@/components/icons";
+
 import { AuthGuard, VerifyFirst } from "@/components/auth-guard";
-import { Alert, Button, Card, DefinitionList, Field, PageTitle } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  Card,
+  CardTitle,
+  DefinitionList,
+  Field,
+  PageTitle,
+  SegmentedControl,
+  WIDTH,
+} from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { useSession } from "@/lib/client/session";
+import { applyTheme, readTheme, type ThemePreference } from "@/lib/client/theme";
 import { formatDateTime } from "@/lib/format";
 import type { Me } from "@/lib/types";
 
@@ -17,6 +30,8 @@ function Content({ me }: { me: Me }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Profile renders only on the client (behind AuthGuard), so localStorage is available here.
+  const [theme, setTheme] = useState<ThemePreference>(() => (typeof window === "undefined" ? "system" : readTheme()));
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -52,21 +67,39 @@ function Content({ me }: { me: Me }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className={`${WIDTH.form} space-y-4`}>
       <PageTitle title="Профайл" />
       {!me.email_verified ? <VerifyFirst email={me.email} /> : null}
       <Card>
         <DefinitionList
           items={[
             ["Имэйл", me.email],
-            ["Баталгаажсан", me.email_verified ? "Тийм ✓" : "Үгүй"],
+            [
+              "Баталгаажсан",
+              me.email_verified ? (
+                <span key="v" className="text-success inline-flex items-center gap-1">
+                  <Icon name="check" className="size-4" />
+                  Тийм
+                </span>
+              ) : (
+                "Үгүй"
+              ),
+            ],
             ["Бүртгүүлсэн", formatDateTime(me.created_at)],
           ]}
         />
       </Card>
-      <Card>
+      <Card aria-labelledby="details-title">
+        <CardTitle id="details-title">Хувийн мэдээлэл</CardTitle>
         <form onSubmit={onSubmit} className="space-y-4">
-          <Field label="Нэр" name="display_name" defaultValue={me.display_name} required minLength={2} maxLength={100} />
+          <Field
+            label="Нэр"
+            name="display_name"
+            defaultValue={me.display_name}
+            required
+            minLength={2}
+            maxLength={100}
+          />
           <Field
             label="Утас (заавал биш)"
             name="phone_e164"
@@ -82,13 +115,35 @@ function Content({ me }: { me: Me }) {
           </Button>
         </form>
       </Card>
+      <Card aria-labelledby="theme-title">
+        <CardTitle id="theme-title">Харагдах байдал</CardTitle>
+        <SegmentedControl
+          label="Өнгөний горим"
+          options={[
+            { value: "system", label: "Төхөөрөмжөөр" },
+            { value: "light", label: "Цайвар" },
+            { value: "dark", label: "Бараан" },
+          ]}
+          value={theme}
+          onChange={(t) => {
+            setTheme(t);
+            applyTheme(t);
+          }}
+        />
+        <p className="text-muted mt-2 text-[13px]">Зөвхөн энэ хөтөч дээр хадгалагдана.</p>
+      </Card>
       <Link
         href="/security"
-        className="bg-surface border-border flex min-h-12 items-center justify-between rounded-2xl border px-4 font-medium"
+        className="bg-surface border-border shadow-card hover:border-border-strong flex min-h-14 items-center justify-between gap-3 rounded-2xl border px-4 font-medium"
       >
-        Аюулгүй байдал ба нууц үг <span aria-hidden>›</span>
+        <span className="flex items-center gap-2">
+          <Icon name="shield" className="text-muted size-[18px]" />
+          Аюулгүй байдал ба нууц үг
+        </span>
+        <Icon name="chevronRight" className="text-muted size-5" />
       </Link>
       <Button variant="secondary" onClick={logout} className="w-full">
+        <Icon name="logout" className="size-4" />
         Гарах
       </Button>
     </div>
