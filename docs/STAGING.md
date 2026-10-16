@@ -4,6 +4,12 @@
 > bank/card/QPay integration, and refuses to start if a real-payment mode is set
 > (`PAYMENT_MODE` must be `simulation`; `PAYMENTS_SIMULATION_ONLY` must be `true`).
 > Use test data only. **Nothing in this document has been deployed yet.**
+>
+> **Deploying to DigitalOcean:** follow [DEPLOY_DIGITALOCEAN.md](DEPLOY_DIGITALOCEAN.md)
+> (server hardening, `safepay.dhdbot.xyz` / `api.safepay.dhdbot.xyz` DNS, `scripts/staging-deploy.sh` /
+> `staging-rollback.sh` / `staging-smoke.sh`, backup timer). The readiness audit is in
+> [DEPLOYMENT_AUDIT.md](DEPLOYMENT_AUDIT.md). This page remains the reference for the
+> stack itself and for admin/tester operations.
 
 ## Architecture
 
@@ -156,13 +162,11 @@ everything again (`migrate` then brings the schema to the code's head).
 
 ### Update to a new reviewed version
 ```bash
-scripts/staging-backup.sh
-git fetch && git checkout <new-tag>
-docker compose -f compose.staging.yaml --env-file .env.staging up -d --build
-scripts/staging-wait.sh
+scripts/staging-deploy.sh <new-tag-or-sha>     # backup, build, start, wait, smoke test
+scripts/staging-rollback.sh                    # back to the previous release if needed
 ```
-Rollback: check out the previous tag and restore the pre-update backup (migrations may
-not be downgradable once data exists — they refuse to destroy data).
+Rollback restores the pre-deploy backup automatically when the deploy applied a
+migration (migrations refuse to destroy data on downgrade); see DEPLOY_DIGITALOCEAN.md §9.
 
 ### Operations
 * Logs: `docker compose -f compose.staging.yaml --env-file .env.staging logs -f api worker`
