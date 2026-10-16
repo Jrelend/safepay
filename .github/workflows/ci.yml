@@ -255,6 +255,7 @@ jobs:
     needs: [api, web]
     env:
       STAGING_DOMAIN: safepay.test
+      STAGING_API_DOMAIN: api.safepay.test
       ORIGIN: https://safepay.test
     steps:
       - uses: actions/checkout@v5
@@ -274,7 +275,7 @@ jobs:
         run: docker compose -f compose.staging.yaml --env-file .env.staging.example config -q
       - name: Generate secrets (as an operator would)
         run: |
-          scripts/staging-init-secrets.sh "$STAGING_DOMAIN" | grep -v password
+          scripts/staging-init-secrets.sh "$STAGING_DOMAIN" "$STAGING_API_DOMAIN" | grep -v password
           test "$(stat -c %a .env.staging)" = "600"
           # CI runner reaches Caddy via the Docker gateway, so allow it everywhere.
           sed -i 's|^ADMIN_ALLOWED_IPS=.*|ADMIN_ALLOWED_IPS="0.0.0.0/0 ::/0"|' .env.staging
@@ -289,7 +290,8 @@ jobs:
         run: |
           dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
           for svc in db migrate api admin-api worker web; do
-            test -z "$(dc port "$svc" 5432 2>/dev/null; dc port "$svc" 8000 2>/dev/null; dc port "$svc" 3000 2>/dev/null)" \
+            # Newer Compose prints ":0" for a port that is exposed but not published.
+            test -z "$( { dc port "$svc" 5432; dc port "$svc" 8000; dc port "$svc" 3000; } 2>/dev/null | grep -v '^:0$')" \
               || { echo "$svc publishes a port"; exit 1; }
           done
           dc ps --format '{{.Service}} {{.Publishers}}' | tee /dev/stderr
@@ -320,6 +322,30 @@ jobs:
             -d '{"email":"before@example.com","password":"Correct-Horse-Battery-9"}' https://$STAGING_DOMAIN/api/auth/login
           grep -i 'set-cookie: __Host-safepay_session=' cookies.txt | grep -qi 'secure'
           grep -i 'set-cookie: __Host-safepay_session=' cookies.txt | grep -qi 'httponly'
+      - name: API host serves only the public API, with the web origin as the only trusted origin
+        run: |
+          A="curl -sk --resolve $STAGING_API_DOMAIN:443:127.0.0.1 -u safepay-beta:ci-basic-pass"
+          U="https://$STAGING_API_DOMAIN"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $STAGING_API_DOMAIN" http://127.0.0.1/)" = "308"
+          test "$(curl -sk --resolve "$STAGING_API_DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "$U/auth/me")" = "401"
+          $A "$U/auth/me" | grep -q '"error"'
+          $A -D - -o /dev/null "$U/auth/me" | grep -qi '^strict-transport-security: max-age=31536000'
+          if $A -D - -o /dev/null "$U/auth/me" | grep -qi 'includesubdomains'; then echo "HSTS must not cover the parent domain"; exit 1; fi
+          for p in /admin/overview /admin/auth/me /docs /openapi.json /health /ready /dev/mailbox; do
+            test "$($A -o /dev/null -w '%{http_code}' "$U$p")" = "404" || { echo "$p is reachable on the API host"; exit 1; }
+          done
+          for origin in https://evil.example "$U" https://dhdbot.xyz; do
+            test "$($A -o /dev/null -w '%{http_code}' -X POST -H "Origin: $origin" -H 'content-type: application/json' -d '{}' "$U/auth/login")" = "403" \
+              || { echo "unsafe request from $origin was not refused"; exit 1; }
+          done
+          $A -D - -o /dev/null -X OPTIONS -H "Origin: $ORIGIN" -H 'Access-Control-Request-Method: POST' "$U/auth/login" \
+            | grep -qi "^access-control-allow-origin: $ORIGIN"
+          if $A -D - -o /dev/null -X OPTIONS -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST' "$U/auth/login" \
+            | grep -qi '^access-control-allow-origin'; then echo "CORS allowed a foreign origin"; exit 1; fi
+          $A -D api-cookies.txt -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"before@example.com","password":"Correct-Horse-Battery-9"}' "$U/auth/login"
+          grep -i 'set-cookie: __Host-safepay_session=' api-cookies.txt | grep -qi 'secure'
+          if grep -i '^set-cookie:' api-cookies.txt | grep -qi 'domain='; then echo "cookie with a Domain attribute"; exit 1; fi
       - name: Refuses unsafe configuration and real-payment mode
         run: |
           run() { docker compose -f compose.staging.yaml --env-file .env.staging run --rm --no-deps "$@" api \
