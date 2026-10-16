@@ -1,0 +1,16 @@
+# Daily staging database backup. Install (as root, adjust User/WorkingDirectory):
+#   cp infra/systemd/safepay-backup.* /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now safepay-backup.timer
+# Check: systemctl list-timers safepay-backup.timer ; journalctl -u safepay-backup
+[Unit]
+Description=SafePay staging database backup (pg_dump, verified, optional age encryption)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/home/deploy/safepay
+ExecStart=/home/deploy/safepay/scripts/staging-backup.sh
+Nice=10
