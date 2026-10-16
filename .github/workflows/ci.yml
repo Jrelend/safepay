@@ -269,7 +269,7 @@ jobs:
             done
           done
       - name: Lint staging scripts
-        run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh
+        run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh scripts/vps-bootstrap.sh
       - name: Validate staging compose with the example env
         run: docker compose -f compose.staging.yaml --env-file .env.staging.example config -q
       - name: Generate secrets (as an operator would)
@@ -283,6 +283,8 @@ jobs:
         run: |
           docker compose -f compose.staging.yaml --env-file .env.staging up -d --build
           scripts/staging-wait.sh
+      - name: Post-deploy smoke test (same script the VPS deploy runs)
+        run: scripts/staging-smoke.sh
       - name: Only the HTTPS proxy is published
         run: |
           dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
