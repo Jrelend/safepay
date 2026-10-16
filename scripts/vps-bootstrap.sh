@@ -34,7 +34,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "== packages"
 apt-get update -q
 apt-get upgrade -yq
-apt-get install -yq ca-certificates curl git ufw unattended-upgrades age jq
+apt-get install -yq ca-certificates curl git ufw unattended-upgrades age jq dnsutils
 timedatectl set-timezone UTC
 
 echo "== user $user"

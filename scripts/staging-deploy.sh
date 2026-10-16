@@ -20,6 +20,7 @@ main() {
   cd "$ROOT"
 
   # --- Preflight -------------------------------------------------------------------
+  docker info >/dev/null 2>&1 || { echo "cannot reach the Docker daemon (is docker running? is $(id -un) in the docker group?)" >&2; exit 1; }
   [[ "$(stat -c %a "$ENV_FILE")" == "600" ]] || { echo "chmod 600 $ENV_FILE first" >&2; exit 1; }
   if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "tracked files are modified on the server; refusing (git status)" >&2; exit 1
