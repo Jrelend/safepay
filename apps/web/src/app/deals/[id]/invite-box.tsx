@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import { Alert, Button, Card } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { Alert, Button, Card, CardTitle } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 
 /** Converts the API's absolute invite URL to this site's origin (same path). */
@@ -50,10 +51,10 @@ export function InviteBox({ dealId, initialUrl }: { dealId: string; initialUrl: 
   }
 
   return (
-    <Card className="space-y-3">
-      <div className="font-semibold">Нөгөө талыг урих</div>
-      <p className="text-muted text-sm">
-        Холбоосыг зөвхөн гэрээ хийх хүндээ илгээнэ үү. Нэг удаа ашиглагдана; шинэ холбоос үүсгэвэл хуучин нь хүчингүй
+    <Card aria-labelledby="invite-title" className="space-y-3">
+      <CardTitle id="invite-title">Нөгөө талыг урих</CardTitle>
+      <p className="text-muted -mt-1 text-sm">
+        Холбоосыг зөвхөн гэрээ хийх хүндээ илгээнэ үү. Нэг удаа ашиглагдана. Шинэ холбоос үүсгэвэл хуучин нь хүчингүй
         болно.
       </p>
       {url ? (
@@ -63,11 +64,15 @@ export function InviteBox({ dealId, initialUrl }: { dealId: string; initialUrl: 
             value={url}
             aria-label="Урилгын холбоос"
             onFocus={(e) => e.currentTarget.select()}
-            className="bg-background border-border w-full rounded-xl border px-3 py-3 font-mono text-xs"
+            className="bg-surface-muted border-border-strong w-full rounded-xl border px-3 py-3 font-mono text-xs"
           />
           <Button onClick={share} className="w-full">
-            {copied ? "Хуулагдлаа ✓" : "Холбоос хуваалцах"}
+            <Icon name={copied ? "check" : "link"} className="size-4" />
+            {copied ? "Хуулагдлаа" : "Холбоос хуваалцах"}
           </Button>
+          <span role="status" className="sr-only">
+            {copied ? "Холбоос хуулагдлаа" : ""}
+          </span>
         </>
       ) : null}
       <Button variant="secondary" onClick={regenerate} loading={busy} className="w-full">

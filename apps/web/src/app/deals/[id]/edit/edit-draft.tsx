@@ -5,8 +5,9 @@ import { useState, type FormEvent } from "react";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { DealTermsFields, readTerms } from "@/components/deal-terms-fields";
-import { Alert, Button, Card, PageTitle, Skeleton } from "@/components/ui";
+import { Alert, Button, Card, PageTitle, Skeleton, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
+import { focusFirstInvalid } from "@/lib/client/focus";
 import { useApi } from "@/lib/client/use-api";
 import type { Deal } from "@/lib/types";
 
@@ -32,9 +33,13 @@ function Form() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const { terms, errors: fieldErrors } = readTerms(new FormData(e.currentTarget));
+    const formEl = e.currentTarget;
+    const { terms, errors: fieldErrors } = readTerms(new FormData(formEl));
     setErrors(fieldErrors);
-    if (Object.keys(fieldErrors).length) return;
+    if (Object.keys(fieldErrors).length) {
+      focusFirstInvalid(formEl);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -47,7 +52,7 @@ function Form() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.form}>
       <PageTitle title="Нөхцөл засах" subtitle={d.reference} back={`/deals/${id}`} />
       <form onSubmit={onSubmit} className="space-y-4">
         <Card className="space-y-4">

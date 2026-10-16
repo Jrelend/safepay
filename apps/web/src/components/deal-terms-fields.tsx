@@ -26,7 +26,13 @@ export function parseAmountInput(raw: string): number | null {
   return n >= MIN_AMOUNT && n <= MAX_AMOUNT ? n : null;
 }
 
-export function DealTermsFields({ defaults = {}, errors = {} }: { defaults?: TermsDefaults; errors?: Record<string, string> }) {
+export function DealTermsFields({
+  defaults = {},
+  errors = {},
+}: {
+  defaults?: TermsDefaults;
+  errors?: Record<string, string>;
+}) {
   const [itemType, setItemType] = useState<ItemType>(defaults.item_type ?? "PHYSICAL_GOODS");
   const allowed = DELIVERY_FOR_ITEM[itemType];
   const [delivery, setDelivery] = useState<DeliveryMethod>(
@@ -64,20 +70,22 @@ export function DealTermsFields({ defaults = {}, errors = {} }: { defaults?: Ter
         hint="Бүхэл төгрөгөөр. 100 ₮-өөс 100 тэрбум ₮ хүртэл."
         error={errors.amount_mnt}
       />
-      <Select
-        label="Төрөл"
-        name="item_type"
-        value={itemType}
-        onChange={(e) => setItemType(e.target.value as ItemType)}
-        options={(Object.keys(ITEM_TYPE_LABEL) as ItemType[]).map((v) => ({ value: v, label: ITEM_TYPE_LABEL[v] }))}
-      />
-      <Select
-        label="Хүлээлгэн өгөх арга"
-        name="delivery_method"
-        value={deliveryValue}
-        onChange={(e) => setDelivery(e.target.value as DeliveryMethod)}
-        options={allowed.map((v) => ({ value: v, label: DELIVERY_LABEL[v] }))}
-      />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Select
+          label="Төрөл"
+          name="item_type"
+          value={itemType}
+          onChange={(e) => setItemType(e.target.value as ItemType)}
+          options={(Object.keys(ITEM_TYPE_LABEL) as ItemType[]).map((v) => ({ value: v, label: ITEM_TYPE_LABEL[v] }))}
+        />
+        <Select
+          label="Хүлээлгэн өгөх арга"
+          name="delivery_method"
+          value={deliveryValue}
+          onChange={(e) => setDelivery(e.target.value as DeliveryMethod)}
+          options={allowed.map((v) => ({ value: v, label: DELIVERY_LABEL[v] }))}
+        />
+      </div>
       <Field
         label="Шалгах хугацаа (хоног)"
         name="inspection_days"
@@ -86,7 +94,7 @@ export function DealTermsFields({ defaults = {}, errors = {} }: { defaults?: Ter
         max={14}
         required
         defaultValue={defaults.inspection_days ?? 3}
-        hint="Хүлээн авснаас хойш худалдан авагч барааг шалгах хугацаа. Мөнгө зөвхөн худалдан авагч баталсан эсвэл SafePay ажилтан шийдвэрлэсний дараа шилжинэ — хугацаа дуусахад автоматаар шилжихгүй."
+        hint="Хүлээн авснаас хойш худалдан авагч шалгах хугацаа (1–14). Хугацаа дуусахад мөнгө автоматаар шилжихгүй."
       />
     </>
   );

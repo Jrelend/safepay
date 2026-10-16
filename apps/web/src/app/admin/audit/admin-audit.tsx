@@ -15,10 +15,10 @@ function Content() {
       {error ? <Alert tone="danger">{error.message}</Alert> : null}
       <ol className="space-y-2">
         {data?.map((a) => (
-          <li key={a.id} className="bg-surface border-border rounded-xl border p-3 text-xs">
+          <li key={a.id} className="bg-surface border-border rounded-xl border p-3 text-[13px]">
             <div className="flex justify-between gap-2">
-              <span className="font-mono font-medium">{a.action}</span>
-              <span className="text-muted">{formatDateTime(a.occurred_at)}</span>
+              <span className="font-mono font-semibold break-all">{a.action}</span>
+              <span className="text-muted shrink-0 text-xs">{formatDateTime(a.occurred_at)}</span>
             </div>
             <div className="text-muted mt-1 break-all">
               {a.actor_type}

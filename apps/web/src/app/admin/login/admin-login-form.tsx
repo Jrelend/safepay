@@ -3,7 +3,8 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, Field, PageTitle } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 
 function safeAdminNext(next: string | null): string {
@@ -43,7 +44,10 @@ export function AdminLoginForm() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.narrow}>
+      <span aria-hidden className="bg-mark text-mark-foreground mb-4 grid size-11 place-items-center rounded-xl">
+        <Icon name="key" />
+      </span>
       <PageTitle
         title="Админ нэвтрэх"
         subtitle="Зөвхөн SafePay ажилтанд. Тусдаа админ нууц үг болон баталгаажуулах апп-ын 6 оронтой код шаардлагатай."

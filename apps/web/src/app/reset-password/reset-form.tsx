@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, Field, PageTitle } from "@/components/ui";
+import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 import { useSession } from "@/lib/client/session";
 
@@ -35,7 +35,7 @@ export function ResetPasswordForm() {
   }
 
   return (
-    <div>
+    <div className={WIDTH.narrow}>
       <PageTitle title="Шинэ нууц үг" subtitle="Шинэчилсний дараа бүх төхөөрөмжөөс гарна." />
       {!token ? (
         <Alert tone="danger">Холбоос дутуу байна.</Alert>

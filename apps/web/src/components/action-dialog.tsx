@@ -33,8 +33,13 @@ export function ActionDialog({
 
   useEffect(() => {
     const dialog = ref.current;
+    // Return focus to the button that opened the dialog (WCAG 2.4.3).
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog?.showModal();
-    return () => dialog?.close();
+    return () => {
+      dialog?.close();
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
 
   async function confirm() {
@@ -64,16 +69,20 @@ export function ActionDialog({
         if (!busy) onClose();
       }}
       aria-labelledby="action-title"
-      className="bg-surface text-foreground m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl p-0 backdrop:bg-black/50"
+      aria-describedby="action-consequence"
+      className="bg-surface text-foreground shadow-raised border-border m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border p-0 backdrop:bg-[#0b1220]/60"
     >
-      <div className="space-y-4 p-5">
-        <h2 id="action-title" className="text-lg font-bold">
+      <div className="space-y-4 p-5 sm:p-6">
+        <h2 id="action-title" className="text-lg leading-snug font-bold">
           {meta.label}
         </h2>
-        <p className="text-muted text-sm">{meta.confirm}</p>
+        <p id="action-consequence" className="text-muted text-sm leading-relaxed">
+          {meta.confirm}
+        </p>
         {meta.money ? (
           <div className="space-y-2">
-            <div className="text-center">
+            <div className="bg-surface-muted rounded-xl py-3 text-center">
+              <div className="text-muted text-xs">{deal.title}</div>
               <Money value={deal.amount_mnt} className="text-2xl font-bold" />
             </div>
             <TestPaymentNotice detail="Бодит банк, карт, QPay ашиглагдахгүй. Ямар ч бодит мөнгө шилжихгүй." />
@@ -89,7 +98,7 @@ export function ActionDialog({
           />
         ) : null}
         {error ? <Alert tone="danger">{error}</Alert> : null}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 pt-1">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Болих
           </Button>
