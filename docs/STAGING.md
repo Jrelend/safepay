@@ -6,7 +6,7 @@
 > Use test data only. **Nothing in this document has been deployed yet.**
 >
 > **Deploying to DigitalOcean:** follow [DEPLOY_DIGITALOCEAN.md](DEPLOY_DIGITALOCEAN.md)
-> (server hardening, sslip.io hostname, `scripts/staging-deploy.sh` /
+> (server hardening, `safepay.dhdbot.xyz` / `api.safepay.dhdbot.xyz` DNS, `scripts/staging-deploy.sh` /
 > `staging-rollback.sh` / `staging-smoke.sh`, backup timer). The readiness audit is in
 > [DEPLOYMENT_AUDIT.md](DEPLOYMENT_AUDIT.md). This page remains the reference for the
 > stack itself and for admin/tester operations.

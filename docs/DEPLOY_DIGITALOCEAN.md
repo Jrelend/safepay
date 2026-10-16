@@ -20,15 +20,18 @@ Companion documents:
                └► droplet (Ubuntu 24.04, ufw with the same rules)
                     └► caddy :80/:443 — the ONLY published container
                          TLS (Let's Encrypt or internal CA) · IP allow-list · basic auth
-                         └► web (Next.js) ─► api / admin-api (FastAPI) ─► db (PostgreSQL 17)
-                                                worker ─┘     (internal networks, no egress)
+                         ├─ safepay.dhdbot.xyz      ─► web (Next.js) ─┬─ /api/*       ─► api
+                         │                                           └─ /api/admin/* ─► admin-api
+                         └─ api.safepay.dhdbot.xyz  ─► api (public API only)
+                              api / admin-api (FastAPI) ─► db (PostgreSQL 17) ◄─ worker
+                              (internal networks, no egress)
 ```
 
 | Item | Value |
 |---|---|
 | Droplet | Basic, Regular SSD, 2 vCPU / 4 GB / 80 GB, Ubuntu 24.04 LTS x64, region SGP1 (Singapore) |
 | Public ports | 80 (redirect + ACME), 443 (HTTPS). SSH 22 only from your IP. |
-| Hostname without a domain | `<ip-with-dashes>.sslip.io` (free wildcard DNS; e.g. `203-0-113-10.sslip.io`) |
+| Hostnames | `safepay.dhdbot.xyz` (web app) and `api.safepay.dhdbot.xyz` (public API): two new A records in the existing `dhdbot.xyz` zone; nothing else in the zone changes (§3a) |
 | Secrets | generated **on the server** into `.env.staging` (mode 600, git-ignored) |
 | Deploys | `scripts/staging-deploy.sh <tag-or-sha>`: backup, build, start, health wait, smoke test |
 | Rollback | `scripts/staging-rollback.sh`: previous commit, restores the pre-deploy backup if the schema moved |
@@ -45,10 +48,10 @@ Prices are from DigitalOcean's public price list as last known and may have chan
 | Droplet weekly backups (optional) | ~$4.80 | 20 % of the droplet price; daily backups ~30 % |
 | Cloud Firewall | $0 | |
 | Monitoring + alert policies | $0 | |
-| Reserved IP (optional, keeps the sslip.io hostname if the droplet is rebuilt) | $0 while assigned | charged when left unassigned |
+| Reserved IP (optional, keeps the DNS records valid if the droplet is rebuilt) | $0 while assigned | charged when left unassigned |
 | Snapshots (optional, manual) | ~$0.06 / GB-month | e.g. a 10 GB snapshot ≈ $0.60 |
 | Spaces object storage (optional off-site backups) | ~$5 | not needed if you pull backups to your own machine |
-| TLS (Let's Encrypt), sslip.io hostname | $0 | |
+| TLS (Let's Encrypt), DNS records in your existing `dhdbot.xyz` zone | $0 | the domain itself is already yours |
 | **Typical total** | **~$24–30** | droplet plus optional weekly backups |
 
 Bandwidth for a closed beta stays far below the included 4 TB.
@@ -81,7 +84,7 @@ Bandwidth for a closed beta stays far below the included 4 TB.
    - **Image:** Ubuntu **24.04 (LTS) x64**
    - **Size:** Basic → Regular (SSD) → **$24/mo, 2 vCPU / 4 GB / 80 GB**
    - **Authentication:** SSH key `safepay-staging`. No password.
-   - **Advanced:** leave IPv6 **off** (the sslip.io hostname is IPv4); enable
+   - **Advanced:** leave IPv6 **off** (only A records are published; no AAAA); enable
      **Monitoring**.
    - **Backups:** optional (weekly).
    - **Hostname:** `safepay-staging` · **Tags:** `safepay-staging`
@@ -116,8 +119,124 @@ doctl compute droplet get safepay-staging --format PublicIPv4     # -> DROPLET_I
 ```
 
 From here on, `DROPLET_IP` is the droplet's public IPv4 address, for example
-`203.0.113.10`. `HOST` is the same address with dashes plus `.sslip.io`, for example
-`203-0-113-10.sslip.io`.
+`203.0.113.10`. If you assigned a Reserved IP, use that address everywhere.
+
+## 3a. DNS for `dhdbot.xyz` — 🔒 APPROVAL (changes live DNS)
+
+**How the two hostnames are used:**
+
+| Hostname | Serves | Who uses it |
+|---|---|---|
+| `safepay.dhdbot.xyz` | Web app, plus the API at `https://safepay.dhdbot.xyz/api/*` (same origin) | Browsers. This is the **frontend API URL**: the app always calls `/api/...` on its own origin, and the Next.js server forwards to the API over the internal network. |
+| `api.safepay.dhdbot.xyz` | The public API only, at the root (e.g. `/auth/me`, `/deals`) | Non-browser clients such as scripts and future mobile apps. It serves no pages. The admin API, `/docs`, `/openapi.json`, `/health`, `/ready` and `/dev/*` return 404 there. |
+
+Both hostnames sit behind the same edge controls: IP allow-list, shared basic auth,
+TLS, and HSTS **without** `includeSubDomains`.
+
+Why the browser does not call `api.safepay.dhdbot.xyz` directly:
+- The session and CSRF cookies are `__Host-` cookies: host-only, with no `Domain`
+  attribute.
+- Same-origin calls keep them working without widening their scope to a parent domain.
+
+### Do not touch the existing records
+
+You add **exactly two A records** (plus, only if §3a.3 says so, one CAA record).
+
+**Do not** edit, delete or re-create any existing record:
+- `dhdbot.xyz` (apex) A/AAAA/ALIAS
+- `www`
+- MX
+- TXT (SPF, DKIM, DMARC, site verification)
+- NS, SOA, existing CAA
+
+**Do not** change nameservers or DNSSEC settings.
+
+### 3a.1 Snapshot the zone before the change (read-only, from your computer)
+
+```bash
+dig +short NS dhdbot.xyz                     # which DNS provider hosts the zone
+snap() {
+  for n in dhdbot.xyz www.dhdbot.xyz safepay.dhdbot.xyz api.safepay.dhdbot.xyz "probe-$RANDOM.dhdbot.xyz"; do
+    for t in A AAAA CNAME MX TXT NS CAA; do
+      printf '%-28s %-5s %s\n' "$n" "$t" "$(dig +short "$t" "$n" @1.1.1.1 | sort | tr '\n' ' ')"
+    done
+  done
+}
+snap | sed 's/^probe-[0-9]*/probe-RANDOM/' > dns-before.txt
+curl -sI https://dhdbot.xyz | head -1 > site-before.txt   # existing website still answers
+cat dns-before.txt
+```
+
+Before continuing, check these in `dns-before.txt`:
+
+- **`safepay.dhdbot.xyz` and `api.safepay.dhdbot.xyz` must have no records.** If they
+  already have any, stop: something else uses those names.
+- **The `probe-RANDOM` line shows whether a wildcard (`*.dhdbot.xyz`) record exists.**
+  If it does, the explicit records below override it for these two names only. Other
+  names keep using the wildcard.
+- **CAA records:** see §3a.3.
+
+### 3a.2 Add the two records (DNS provider's control panel)
+
+| Type | Name / Host | Value | TTL | Proxy (Cloudflare etc.) |
+|---|---|---|---|---|
+| `A` | `safepay` | `DROPLET_IP` | 300 (5 min) | **DNS only** (proxy off) |
+| `A` | `api.safepay` | `DROPLET_IP` | 300 (5 min) | **DNS only** (proxy off) |
+
+Notes on these records:
+- **Name format:** "Name" is relative to the zone. Some panels want the full name,
+  `safepay.dhdbot.xyz.` and `api.safepay.dhdbot.xyz.`
+- **No AAAA records.** The droplet has no IPv6.
+- **No proxy or CDN.** Behind a proxy, Caddy would see the proxy's IPs, which breaks the
+  IP allow-lists and the API rate limits. The proxy would also terminate TLS instead of
+  Caddy.
+
+If the zone is hosted on DigitalOcean DNS, the equivalent commands are:
+```bash
+doctl compute domain records create dhdbot.xyz --record-type A --record-name safepay --record-data DROPLET_IP --record-ttl 300
+doctl compute domain records create dhdbot.xyz --record-type A --record-name api.safepay --record-data DROPLET_IP --record-ttl 300
+```
+
+### 3a.3 CAA (only if the snapshot shows CAA records)
+
+CAA records can restrict which certificate authorities may issue for the domain.
+
+- **No CAA record anywhere:** nothing to do. This is the common case.
+- **CAA at `dhdbot.xyz` that does not list `letsencrypt.org`:** add **one** record on
+  the SafePay name, for example:
+
+  | Type | Name | Value |
+  |---|---|---|
+  | `CAA` | `safepay` | `0 issue "letsencrypt.org"` |
+
+  CAA lookup walks up from the requested name and stops at the first name that has CAA
+  records. So this record covers `safepay.dhdbot.xyz` and `api.safepay.dhdbot.xyz`, and
+  leaves the policy for `dhdbot.xyz`, `www` and everything else unchanged.
+
+`scripts/staging-check-dns.sh` performs the same CAA check on the droplet.
+
+### 3a.4 Verify (from your computer, then on the droplet)
+
+```bash
+for r in 1.1.1.1 8.8.8.8; do
+  dig +short A safepay.dhdbot.xyz @$r; dig +short A api.safepay.dhdbot.xyz @$r   # both: DROPLET_IP
+done
+dig +short AAAA safepay.dhdbot.xyz; dig +short AAAA api.safepay.dhdbot.xyz        # both: empty
+dig +short A safepay.dhdbot.xyz @"$(dig +short NS dhdbot.xyz | head -1)"          # authoritative answer
+snap | sed 's/^probe-[0-9]*/probe-RANDOM/' > dns-after.txt
+diff dns-before.txt dns-after.txt     # ONLY the safepay / api.safepay lines (and a CAA line if added) may differ
+curl -sI https://dhdbot.xyz | head -1 | diff site-before.txt -   # existing website unchanged
+```
+
+On the droplet (after §6), check that both names point here and that CAA allows
+Let's Encrypt:
+
+```bash
+scripts/staging-check-dns.sh
+```
+
+**Undo:** delete the two A records (and the CAA record, if you added one). Nothing
+else was changed.
 
 ## 4. Harden the server (first login, as root)
 
@@ -173,7 +292,7 @@ git clone git@github.com:Jrelend/safepay.git ~/safepay && cd ~/safepay
 
 ```bash
 cd ~/safepay
-scripts/staging-init-secrets.sh HOST          # e.g. 203-0-113-10.sslip.io; prints the basic-auth password ONCE
+scripts/staging-init-secrets.sh safepay.dhdbot.xyz api.safepay.dhdbot.xyz   # prints the basic-auth password ONCE
 nano .env.staging
 ```
 
@@ -182,8 +301,9 @@ hash. In `.env.staging`, set:
 
 | Variable | Set to |
 |---|---|
-| `STAGING_DOMAIN` | `HOST` (already set by the script) |
-| `CADDY_TLS` | `internal` for the first smoke test; then your email address for a Let's Encrypt certificate |
+| `STAGING_DOMAIN` | `safepay.dhdbot.xyz` (already set by the script) |
+| `STAGING_API_DOMAIN` | `api.safepay.dhdbot.xyz` (already set by the script) |
+| `CADDY_TLS` | `internal` for the first smoke test; then your email address, so Caddy obtains Let's Encrypt certificates for both names |
 | `ALLOWED_IPS` | testers' networks, or keep `"0.0.0.0/0 ::/0"` and rely on basic auth |
 | `ADMIN_ALLOWED_IPS` | `"YOUR_IP/32"`; the admin area is unreachable from anywhere else |
 | `BACKUP_AGE_RECIPIENT` | the `age1...` public key from step 2.3 |
@@ -191,12 +311,22 @@ hash. In `.env.staging`, set:
 Store the basic-auth password and a copy of `.env.staging` in your password manager.
 Never commit `.env.staging`, and never paste it into chat, issues or PRs.
 
-Then check the file and the hostname:
+Then check the file and the hostnames:
 
 ```bash
 stat -c %a .env.staging                     # must print 600
-scripts/staging-check-dns.sh                # HOST must resolve to this droplet
+scripts/staging-check-dns.sh                # both names must resolve only to this droplet
 ```
+
+These are derived from the two hostnames by `compose.staging.yaml`. Do not set them in
+`.env.staging`.
+
+| Setting | Value | Effect |
+|---|---|---|
+| `PUBLIC_WEB_URL` | `https://safepay.dhdbot.xyz` | Links in invites and verification emails |
+| `CORS_ALLOWED_ORIGINS` | `["https://safepay.dhdbot.xyz"]` | The only CORS origin, and the only origin the CSRF check accepts on unsafe requests. Requests carrying `Origin: https://dhdbot.xyz` (the existing website), `https://api.safepay.dhdbot.xyz` or any other origin are refused with 403. |
+| `COOKIE_SECURE` | `true` | `__Host-safepay_session` / `__Host-safepay_csrf` (`Secure`, `HttpOnly` for the session, `SameSite=Lax`, host-only, `Path=/`). Admin cookies: `__Host-safepay_admin*`, `SameSite=Strict`. |
+| Web `API_INTERNAL_URL` | `http://api:8000` (internal) | Server-side target of the web app's `/api/*` proxy. Browsers never see it. |
 
 ## 7. Deploy — 🔒 APPROVAL (starts serving on ports 80/443)
 
@@ -222,22 +352,42 @@ The script runs these steps in order and stops on the first failure:
 
 Re-run the smoke test at any time with `scripts/staging-smoke.sh`.
 
-From your computer, check the site. Expect a basic-auth prompt, then the Mongolian
-landing page with the "Туршилтын орчин" banner.
+From your computer, check both hosts. In a browser, expect a basic-auth prompt, then
+the Mongolian landing page with the "Туршилтын орчин" banner.
 
 ```bash
-curl -sI http://HOST | head -1                         # 308 -> https
-curl -skI https://HOST | head -1                       # 401 (basic auth)
+for h in safepay.dhdbot.xyz api.safepay.dhdbot.xyz; do
+  curl -sI "http://$h/"  | head -1                     # HTTP/1.1 308 (redirect to https)
+  curl -skI "https://$h/" | head -1                    # HTTP/2 401 (basic auth); drop -k once on Let's Encrypt
+done
+# With the beta login (curl prompts for the password, so it stays out of shell history):
+curl -s -u safepay-beta https://api.safepay.dhdbot.xyz/auth/me          # {"error":{...}} 401 from the API: not signed in
+curl -s -o /dev/null -w '%{http_code}\n' -u safepay-beta https://api.safepay.dhdbot.xyz/docs        # 404
+curl -s -o /dev/null -w '%{http_code}\n' -u safepay-beta https://api.safepay.dhdbot.xyz/admin/overview  # 404
+curl -s -o /dev/null -w '%{http_code}\n' -u safepay-beta -X POST -H 'Origin: https://dhdbot.xyz' \
+  -H 'content-type: application/json' -d '{}' https://safepay.dhdbot.xyz/api/auth/login   # 403 (foreign origin)
+curl -sI https://dhdbot.xyz | head -1                  # the existing website is unaffected
 ```
 
 **Switch to a trusted certificate:**
-1. Set `CADDY_TLS=you@example.com` in `.env.staging`.
+1. Set `CADDY_TLS=you@example.com` in `.env.staging`. Let's Encrypt uses this address
+   for expiry notices.
 2. Run:
    ```bash
    scripts/staging-check-dns.sh
    docker compose -f compose.staging.yaml --env-file .env.staging up -d caddy
-   scripts/staging-smoke.sh                               # now validates the certificate
+   scripts/staging-smoke.sh                               # now validates both certificates
    ```
+3. From your computer, check both certificates:
+   ```bash
+   for h in safepay.dhdbot.xyz api.safepay.dhdbot.xyz; do
+     echo | openssl s_client -connect "$h:443" -servername "$h" 2>/dev/null \
+       | openssl x509 -noout -subject -issuer -enddate     # subject CN=$h, issuer Let's Encrypt
+   done
+   ```
+
+Caddy renews the certificates automatically, about 30 days before expiry. The
+certificates live in the `caddy_data` volume.
 
 If issuance fails, check `docker compose ... logs caddy`. Let's Encrypt rate limits
 apply, so do not retry in a tight loop. Fall back to `CADDY_TLS=internal` meanwhile.
@@ -316,7 +466,7 @@ Deploy history (time, from/to commit, backup used, schema) is kept in
 | Corrupted or wrong data | `scripts/staging-backup.sh` (keep the evidence), then `scripts/staging-restore.sh <backup>` |
 | Disk filling up | `df -h`, `docker system df`; `docker image prune -a --filter "until=168h"` removes old release images (rollback then rebuilds). |
 | Lost SSH access (your IP changed) | Control panel → droplet → **Access → Droplet Console**, then `sudo ufw allow from NEW_IP/32 to any port 22 proto tcp`. Also update the Cloud Firewall rule. |
-| Droplet destroyed | Create a new droplet (§3, reuse the Reserved IP to keep `HOST`), then §4–§6. Restore `.env.staging` from your password manager, deploy the same tag (§7), restore the latest off-site backup (§8). Caddy obtains a new certificate automatically. |
+| Droplet destroyed | Create a new droplet (§3). Reuse the Reserved IP, or update the two A records in §3a.2 to the new IP. Then §4–§6. Restore `.env.staging` from your password manager, deploy the same tag (§7), restore the latest off-site backup (§8). Caddy obtains a new certificate automatically. |
 | Suspected compromise | Power off the droplet from the control panel. Take a snapshot for forensics. Rotate the basic-auth password, all DB passwords, the admin TOTP (`app.cli reset-admin-credentials`) and the GitHub deploy key. Rebuild from a clean droplet. |
 
 ## 11. Tear down — 🔒 APPROVAL (irreversible)

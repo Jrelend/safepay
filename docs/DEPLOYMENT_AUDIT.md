@@ -18,7 +18,7 @@
 |---|---|---|
 | B1 | The deployment tooling (this branch) is not on `main`. `staging-deploy.sh` refuses commits that lack it. | Review and merge this PR, then deploy a tag of `main`. |
 | B2 | PR #4 (UI/UX redesign) is not merged. Deploying `main` today ships the older UI. | Decide whether staging should show the redesign. If so, merge PR #4 first. Either order works with this tooling. |
-| B3 | No custom domain. Let's Encrypt needs a public DNS name. | Use `<ip-with-dashes>.sslip.io` (free wildcard DNS). `staging-check-dns.sh` validates it before Caddy requests a certificate. Unverified here: issuance for sslip.io names, and whether sslip.io shares Let's Encrypt rate limits across all its users. Fallback: `CADDY_TLS=internal` (browser warning; acceptable for a closed test). |
+| B3 | Hostnames: `safepay.dhdbot.xyz` (web) and `api.safepay.dhdbot.xyz` (API) in the existing `dhdbot.xyz` zone. | Add two A records, DNS only (runbook §3a). Snapshot the zone before and after so that nothing else changes. `staging-check-dns.sh` validates both names and CAA before Caddy requests certificates. The live zone could not be inspected from this sandbox (outbound DNS-over-HTTPS is blocked), so check §3a.1 for existing `safepay`/`api.safepay` records, a wildcard, CAA records and a CDN proxy. |
 | B4 | No real email delivery. Verification and reset links stay in the `email_outbox` table. | Acceptable for a closed beta: the operator relays links with `app.cli outbox`. This is a blocker for any open sign-up. |
 | B5 | The server bootstrap (`vps-bootstrap.sh`) and the systemd backup timer have never run on a real Ubuntu 24.04 droplet. The CI and local sandbox have no systemd, ufw or sshd. | Run them on the droplet as part of the approved setup, keeping a root session open (runbook §4). |
 | B6 | Owner approval for creating the droplet (about $24/month) and for exposing ports 80/443. | Pending. Runbook steps marked 🔒. |
@@ -41,6 +41,9 @@
 | **Secrets** | Generated on the server by `staging-init-secrets.sh` with `openssl rand` (192-bit DB passwords, bcrypt basic-auth hash), mode 600, git-ignored. Deploys refuse a world-readable env file. The admin password and TOTP seed are created interactively by `app.cli grant-admin`. No secret lives in Git or the images. | ✅ |
 | **Backups** | Verified `pg_dump`, SHA-256, optional `age` encryption, 14 daily / 8 weekly retention, daily systemd timer. | ⚠️ Encryption is optional; the deploy warns when it is off. |
 | **Admin TOTP secrets** | Stored in plaintext in `admins.totp_secret`. Anyone with a DB dump can generate admin codes, though they still need the admin password and an allow-listed IP. | ⚠️ Mitigate with `BACKUP_AGE_RECIPIENT` (always on the VPS) and backups kept off public storage. Future: encrypt at rest with a key outside the DB. |
+| **API hostname** | `api.safepay.dhdbot.xyz` reverse-proxies only to the public API (`safepay_app`). The admin API, `/docs`, `/openapi.json`, `/health`, `/ready` and `/dev/*` return 404 (CI asserts this). The same IP allow-list and basic auth apply as on the web host. Caddy overwrites `X-Forwarded-For`; a spoofed value did not reach the rate limiter (verified: the limit was keyed to the real client address). The browser keeps using same-origin `/api`, so cookies stay `__Host-`. | ✅ |
+| **Sharing `dhdbot.xyz` with the existing website** | The two SafePay names are subdomains of an existing site, which makes them **same-site** with it, so `SameSite` alone would not stop requests from `dhdbot.xyz`. CSRF protection does not rely on it: unsafe requests need an **exact** allowed `Origin` (`https://safepay.dhdbot.xyz`) plus the synchronizer token. A request from `Origin: https://dhdbot.xyz` returned 403 (CI asserts this). `__Host-` cookies cannot be overwritten or shadowed by cookies the parent site sets for `.dhdbot.xyz` (cookie tossing). HSTS has no `includeSubDomains`, so the parent site's HTTPS policy is untouched. SafePay sets no cookies on `dhdbot.xyz`. | ✅ |
+| **Browser use of the API hostname** | Basic auth is enforced on `api.safepay.dhdbot.xyz`. Browsers send no credentials on CORS preflight, so a browser app calling that host cross-origin would fail. That is fine today (the web app uses same-origin `/api`). Revisit before building a browser client for the API host. | ℹ️ |
 | **Host firewall** | Docker-published ports bypass ufw. Only Caddy publishes 80/443 by design, and the DigitalOcean Cloud Firewall filters before the droplet. | ⚠️ Keep both firewalls; never add `ports:` to other services. |
 
 ## 3. Remaining security risks (accepted for a closed staging run)
@@ -69,7 +72,8 @@
 
 | Variable | Secret? | Purpose |
 |---|---|---|
-| `STAGING_DOMAIN` | no | Public hostname, e.g. `203-0-113-10.sslip.io` |
+| `STAGING_DOMAIN` | no | Web app hostname: `safepay.dhdbot.xyz` |
+| `STAGING_API_DOMAIN` | no | Public API hostname: `api.safepay.dhdbot.xyz` |
 | `CADDY_TLS` | no | `internal`, or an email address for Let's Encrypt |
 | `STAGING_BIND` | no | `0.0.0.0` on the VPS |
 | `ALLOWED_IPS` | no | CIDRs allowed to reach the site |
