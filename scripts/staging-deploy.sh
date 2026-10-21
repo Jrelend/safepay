@@ -32,6 +32,9 @@ main() {
     "$ROOT/scripts/staging-check-dns.sh"
   fi
   [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]] || echo "WARNING: BACKUP_AGE_RECIPIENT is empty: backups (incl. admin TOTP secrets) are NOT encrypted" >&2
+  if [[ "$SITE_ACCESS" == "public" ]]; then
+    echo "NOTE: SITE_ACCESS=public: the web site is open without the basic-auth login (admin area and API host stay behind it)" >&2
+  fi
   [[ "$ADMIN_ALLOWED_IPS" != "127.0.0.1/32" ]] || echo "note: ADMIN_ALLOWED_IPS is 127.0.0.1/32, so /admin is unreachable from outside" >&2
 
   git fetch --quiet --tags origin
@@ -43,7 +46,7 @@ main() {
   # The commit being deployed must carry this tooling (smoke test, image tags, rollback).
   git cat-file -e "$target:scripts/staging-smoke.sh" 2>/dev/null \
     || { echo "$ref predates the deployment tooling (scripts/staging-smoke.sh); refusing" >&2; exit 1; }
-  echo "deploy: ${previous:0:12} -> ${target:0:12} ($ref) to https://$STAGING_DOMAIN"
+  echo "deploy: ${previous:0:12} -> ${target:0:12} ($ref) to https://$STAGING_DOMAIN (site access: $SITE_ACCESS)"
   if [[ "$assume_yes" != "--yes" ]]; then
     read -r -p "Type 'deploy' to continue: " answer
     [[ "$answer" == "deploy" ]] || { echo "aborted"; exit 1; }

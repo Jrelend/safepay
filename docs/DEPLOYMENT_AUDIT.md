@@ -36,7 +36,7 @@
 | **API routing** | The browser talks only to the web origin. The Next.js proxy forwards an allow-list of headers and validated path segments. `/health`, `/ready`, `/docs` and `/api/dev/*` are not reachable from outside (CI asserts 404). Caddy drops the `Authorization` header and overwrites `X-Forwarded-For`. | ✅ |
 | **Migrations** | Run by a one-shot `migrate` container as `safepay_migrator`; they refuse to run as the superuser. Apps start only after `migrate` exits 0. `/ready` fails if the DB schema differs from the code. Migrations refuse destructive downgrades, so rollback across a migration needs a backup restore, which `staging-rollback.sh` automates. | ✅ |
 | **Network exposure** | Only `caddy` publishes ports (80/443). db, api, admin-api, web and worker have no host ports and no egress. `staging-smoke.sh` asserts this after every deploy and in CI. | ✅ |
-| **TLS / edge** | HTTP→HTTPS redirect (308), HSTS, CSP, `X-Frame-Options`, `nosniff`, no access log (URLs carry one-time tokens), IP allow-list with a stricter admin allow-list, and shared basic auth in front of everything. | ✅ |
+| **TLS / edge** | HTTP→HTTPS redirect (308), HSTS, CSP, `X-Frame-Options`, `nosniff`, no access log (URLs carry one-time tokens), IP allow-list with a stricter admin allow-list, and shared basic auth: in front of everything with `SITE_ACCESS=private` (default), or only the admin area and the API host with `SITE_ACCESS=public`. Unknown values fail closed (Caddy will not start). `/dev/*` and `/api/dev/*` return 404 at the edge. | ✅ |
 | **Containers** | Read-only root filesystems, `cap_drop: ALL`, `no-new-privileges`, non-root users, memory and CPU limits (about 2.9 GB total on a 4 GB droplet plus 2 GB swap), `restart: unless-stopped`, json-file log rotation (10 MB × 5). | ✅ |
 | **Secrets** | Generated on the server by `staging-init-secrets.sh` with `openssl rand` (192-bit DB passwords, bcrypt basic-auth hash), mode 600, git-ignored. Deploys refuse a world-readable env file. The admin password and TOTP seed are created interactively by `app.cli grant-admin`. No secret lives in Git or the images. | ✅ |
 | **Backups** | Verified `pg_dump`, SHA-256, optional `age` encryption, 14 daily / 8 weekly retention, daily systemd timer. | ⚠️ Encryption is optional; the deploy warns when it is off. |
@@ -80,6 +80,7 @@
 | `ADMIN_ALLOWED_IPS` | no | CIDRs allowed to reach `/admin` and `/api/admin` |
 | `BASIC_AUTH_USER` | no | Shared beta login name |
 | `BASIC_AUTH_HASH` | **yes** (hash) | bcrypt hash of the shared beta password |
+| `SITE_ACCESS` | no | `private` (default) or `public`: where the shared login applies |
 | `POSTGRES_USER`, `POSTGRES_DB` | no | Superuser name (bootstrap only), database name |
 | `POSTGRES_PASSWORD` | **yes** | Superuser (init, backups, restores) |
 | `SAFEPAY_MIGRATOR_PASSWORD` | **yes** | Schema owner (migrations, owner CLI) |

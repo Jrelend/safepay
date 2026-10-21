@@ -19,18 +19,6 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
-    services:
-      postgres:
-        # Official Docker Library image via ECR Public (avoids Docker Hub pull rate limits).
-        image: public.ecr.aws/docker/library/postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci-superuser-password
-          POSTGRES_DB: safepay
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       APP_ENV: test
       PGHOST: localhost
@@ -48,6 +36,19 @@ jobs:
       REQUIRE_INTEGRATION_TESTS: "1"
     steps:
       - uses: actions/checkout@v5
+      - name: Start PostgreSQL 17 (official image; registry fallback, see scripts/ci-pull-images.sh)
+        working-directory: ${{ github.workspace }}
+        run: |
+          scripts/ci-pull-images.sh public.ecr.aws/docker/library/postgres:17-alpine
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=ci-superuser-password -e POSTGRES_DB=safepay \
+            --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20 \
+            public.ecr.aws/docker/library/postgres:17-alpine
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' postgres)" = healthy ] && exit 0
+            sleep 2
+          done
+          docker logs postgres; exit 1
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
@@ -108,18 +109,6 @@ jobs:
     name: Browser E2E (Playwright, real API + PostgreSQL roles)
     runs-on: ubuntu-latest
     needs: [api, web]
-    services:
-      postgres:
-        # Official Docker Library image via ECR Public (avoids Docker Hub pull rate limits).
-        image: public.ecr.aws/docker/library/postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ci-superuser-password
-          POSTGRES_DB: postgres
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       PGHOST: localhost
       PGUSER: postgres
@@ -130,6 +119,19 @@ jobs:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v5
+      - name: Start PostgreSQL 17 (official image; registry fallback, see scripts/ci-pull-images.sh)
+        working-directory: ${{ github.workspace }}
+        run: |
+          scripts/ci-pull-images.sh public.ecr.aws/docker/library/postgres:17-alpine
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=ci-superuser-password -e POSTGRES_DB=postgres \
+            --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20 \
+            public.ecr.aws/docker/library/postgres:17-alpine
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' postgres)" = healthy ] && exit 0
+            sleep 2
+          done
+          docker logs postgres; exit 1
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
@@ -168,16 +170,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: cp .env.example .env
-      - name: Pre-pull base images (retry on registry rate limits)
+      - name: Pre-pull base images (ECR Public, falling back to the same official image elsewhere)
         run: |
-          for img in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/python:3.13-slim \
-                     public.ecr.aws/docker/library/node:22-alpine; do
-            for attempt in 1 2 3 4 5; do
-              docker pull -q "$img" && break
-              [ "$attempt" = 5 ] && exit 1
-              sleep $((attempt * 15))
-            done
-          done
+          scripts/ci-pull-images.sh public.ecr.aws/docker/library/postgres:17-alpine \
+            public.ecr.aws/docker/library/python:3.13-slim public.ecr.aws/docker/library/node:22-alpine
       - name: Validate compose files
         run: |
           docker compose config -q
@@ -259,18 +255,13 @@ jobs:
       ORIGIN: https://safepay.test
     steps:
       - uses: actions/checkout@v5
-      - name: Pre-pull base images (retry on registry rate limits)
+      - name: Pre-pull base images (ECR Public, falling back to the same official image elsewhere)
         run: |
-          for img in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/python:3.13-slim \
-                     public.ecr.aws/docker/library/node:22-alpine public.ecr.aws/docker/library/caddy:2-alpine; do
-            for attempt in 1 2 3 4 5; do
-              docker pull -q "$img" && break
-              [ "$attempt" = 5 ] && exit 1
-              sleep $((attempt * 15))
-            done
-          done
+          scripts/ci-pull-images.sh public.ecr.aws/docker/library/postgres:17-alpine \
+            public.ecr.aws/docker/library/python:3.13-slim public.ecr.aws/docker/library/node:22-alpine \
+            public.ecr.aws/docker/library/caddy:2-alpine
       - name: Lint staging scripts
-        run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh scripts/vps-bootstrap.sh
+        run: shellcheck -x scripts/staging-*.sh scripts/e2e-stack.sh scripts/vps-bootstrap.sh scripts/ci-pull-images.sh
       - name: Validate staging compose with the example env
         run: docker compose -f compose.staging.yaml --env-file .env.staging.example config -q
       - name: Generate secrets (as an operator would)
@@ -313,6 +304,7 @@ jobs:
           $A -D - -o /dev/null https://$STAGING_DOMAIN/ | grep -qi '^strict-transport-security'
           test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/health)" = "404"
           test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/dev/mailbox?email=a@b.c)" = "404"
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/dev/mailbox)" = "404"
           test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/admin/overview)" = "401"
           test "$($A -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}' https://$STAGING_DOMAIN/api/auth/login)" = "403"
           reg() { $A -o /dev/null -w '%{http_code}' -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
@@ -366,6 +358,69 @@ jobs:
           test "$(docker inspect -f '{{.HostConfig.Memory}}' "$(dc ps -q api)")" = "536870912"
           dc logs worker | grep -q "automatic release: disabled"
           test "$(dc exec -T db psql -U postgres -d safepay -At -c 'SELECT auto_release_enabled FROM platform_policy')" = "f"
+      - name: SITE_ACCESS=public opens only the web app; admin area and API host stay gated
+        run: |
+          dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
+          # Caddy refuses to start with any value other than private/public (fails closed).
+          for bad in bogus ""; do
+            if docker run --rm -e SITE_ACCESS="$bad" -e STAGING_DOMAIN=x.test -e STAGING_API_DOMAIN=api.x.test \
+                 -e CADDY_TLS=internal -e ALLOWED_IPS=0.0.0.0/0 -e ADMIN_ALLOWED_IPS=0.0.0.0/0 -e BASIC_AUTH_USER=u -e BASIC_AUTH_HASH=h \
+                 -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" public.ecr.aws/docker/library/caddy:2-alpine \
+                 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+              echo "Caddy accepted SITE_ACCESS='$bad'"; exit 1
+            fi
+          done
+          echo "SITE_ACCESS=public" >> .env.staging
+          dc up -d caddy
+          scripts/staging-wait.sh
+          scripts/staging-smoke.sh
+          C="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1"
+          A="$C -u safepay-beta:ci-basic-pass"
+          code() { $C -o /dev/null -w '%{http_code}' "$@"; }
+          # Public pages: no edge login, same security headers.
+          for p in / /login /register /forgot-password; do
+            test "$(code "https://$STAGING_DOMAIN$p")" = "200" || { echo "$p is not public"; exit 1; }
+          done
+          $C https://$STAGING_DOMAIN/ | grep -q 'lang="mn"'
+          H=$($C -D - -o /dev/null https://$STAGING_DOMAIN/)
+          if grep -qi '^www-authenticate' <<<"$H"; then echo "public page still asks for basic auth"; exit 1; fi
+          for h in strict-transport-security content-security-policy x-frame-options 'x-robots-tag: noindex'; do
+            grep -qi "^$h" <<<"$H" || { echo "missing header: $h"; exit 1; }
+          done
+          # The admin area still needs the edge login, whatever the spelling of the path.
+          for p in /admin /admin/ /admin/login /ADMIN /Admin/login //admin /admin/../admin /%61dmin \
+                   /api/admin/overview /API/ADMIN/overview //api//admin/overview /api/%61dmin/overview; do
+            test "$(code --path-as-is "https://$STAGING_DOMAIN$p")" = "401" || { echo "$p is reachable without basic auth"; exit 1; }
+          done
+          $C -D - -o /dev/null https://$STAGING_DOMAIN/admin | grep -qi '^www-authenticate: basic'
+          # Behind the edge login, the app's own admin authentication still applies.
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/admin/login)" = "200"
+          test "$($A -o /dev/null -w '%{http_code}' https://$STAGING_DOMAIN/api/admin/overview)" = "401"
+          $A https://$STAGING_DOMAIN/api/admin/overview | grep -q '"error"'
+          # Staging-only and operational endpoints stay hidden.
+          for p in /dev/mailbox /api/dev/mailbox?email=a@b.c /api/health /api/ready /api/docs /api/openapi.json; do
+            test "$(code "https://$STAGING_DOMAIN$p")" = "404" || { echo "$p is exposed"; exit 1; }
+          done
+          # The app's own protections answer directly: login required, CSRF/Origin, cookies.
+          test "$(code https://$STAGING_DOMAIN/api/auth/me)" = "401"
+          $C https://$STAGING_DOMAIN/api/auth/me | grep -q '"error"'
+          for origin in https://evil.example https://dhdbot.xyz; do
+            test "$(code -X POST -H "Origin: $origin" -H 'content-type: application/json' -d '{}' https://$STAGING_DOMAIN/api/auth/login)" = "403" \
+              || { echo "unsafe request from $origin was not refused"; exit 1; }
+          done
+          $C -D pub-cookies.txt -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"before@example.com","password":"Correct-Horse-Battery-9"}' https://$STAGING_DOMAIN/api/auth/login
+          grep -i 'set-cookie: __Host-safepay_session=' pub-cookies.txt | grep -qi 'secure'
+          if grep -i '^set-cookie:' pub-cookies.txt | grep -qi 'domain='; then echo "cookie with a Domain attribute"; exit 1; fi
+          # The API host stays private.
+          test "$(curl -sk --resolve "$STAGING_API_DOMAIN:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$STAGING_API_DOMAIN/auth/me")" = "401"
+          curl -sk --resolve "$STAGING_API_DOMAIN:443:127.0.0.1" -D - -o /dev/null "https://$STAGING_API_DOMAIN/auth/me" | grep -qi '^www-authenticate: basic'
+          # Back to the default: the whole site is gated again.
+          sed -i '/^SITE_ACCESS=public$/d' .env.staging
+          dc up -d caddy
+          scripts/staging-wait.sh
+          test "$(code https://$STAGING_DOMAIN/)" = "401"
+          scripts/staging-smoke.sh
       - name: Backup and restore (disposable data)
         run: |
           C="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1 -u safepay-beta:ci-basic-pass"
