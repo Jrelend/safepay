@@ -2,7 +2,8 @@
 # shellcheck source-path=SCRIPTDIR
 # Post-deploy checks, run ON the server after scripts/staging-wait.sh:
 #   * only caddy publishes ports, and only 80/443; internal ports are closed on the host
-#   * both hosts (web + API): HTTP redirects to HTTPS; HTTPS answers with basic auth
+#   * both hosts: HTTP redirects to HTTPS; the API host and the admin area always need the
+#     basic-auth login; the rest of the web site does too unless SITE_ACCESS=public
 #   * with Let's Encrypt (CADDY_TLS=<email>) the certificate must validate
 #   * API readiness: database, migrations at the code's head, least-privileged role
 #   * simulation-only payments and disabled automatic release
@@ -36,15 +37,33 @@ ok "only caddy publishes 80/443; 3000/5432/8000 closed on the host"
 # 2. Edge behaviour for both hosts (connect locally, present the real hostname).
 tls_opts=(-k)
 if [[ "$CADDY_TLS" != "internal" ]]; then tls_opts=(); fi
+# status <host> <path>: HTTPS status code without any credentials.
+status() {
+  curl -s --noproxy '*' "${tls_opts[@]}" -o /dev/null -w '%{http_code}' --max-time 15 \
+    --resolve "$1:443:127.0.0.1" "https://$1$2" \
+    || fail "HTTPS request to $1 failed (certificate not issued or not trusted yet?)"
+}
 for host in "$STAGING_DOMAIN" "$STAGING_API_DOMAIN"; do
   code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 10 -H "Host: $host" http://127.0.0.1/)"
   [[ "$code" == "308" ]] || fail "http://$host returned $code, expected 308 redirect"
-  code="$(curl -s --noproxy '*' "${tls_opts[@]}" -o /dev/null -w '%{http_code}' --max-time 15 \
-    --resolve "$host:443:127.0.0.1" "https://$host/")" \
-    || fail "HTTPS request to $host failed (certificate not issued or not trusted yet?)"
-  [[ "$code" == "401" ]] || fail "https://$host returned $code, expected 401 (basic auth)"
 done
-ok "HTTP->HTTPS redirect and basic auth on $STAGING_DOMAIN and $STAGING_API_DOMAIN (tls: $CADDY_TLS)"
+# The API host is always private.
+code="$(status "$STAGING_API_DOMAIN" /)"
+[[ "$code" == "401" ]] || fail "https://$STAGING_API_DOMAIN returned $code, expected 401 (basic auth)"
+if [[ "$SITE_ACCESS" == "private" ]]; then
+  code="$(status "$STAGING_DOMAIN" /)"
+  [[ "$code" == "401" ]] || fail "https://$STAGING_DOMAIN returned $code, expected 401 (basic auth)"
+else
+  code="$(status "$STAGING_DOMAIN" /)"
+  [[ "$code" == "200" ]] || fail "https://$STAGING_DOMAIN returned $code, expected 200 (SITE_ACCESS=public)"
+fi
+# Whatever the mode, the admin area never answers without the edge login
+# (401 = basic auth, 403 = not on the admin IP allow-list) and dev pages are not served.
+for path in /admin /admin/login /api/admin/overview; do
+  code="$(status "$STAGING_DOMAIN" "$path")"
+  [[ "$code" == "401" || "$code" == "403" ]] || fail "https://$STAGING_DOMAIN$path returned $code without credentials"
+done
+ok "HTTP->HTTPS redirect on both hosts; API host behind basic auth; web site access: $SITE_ACCESS; admin area gated (tls: $CADDY_TLS)"
 
 # 3. Readiness from inside the internal network.
 dc exec -T api python -c "

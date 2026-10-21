@@ -39,7 +39,7 @@
 | Control | How |
 |---|---|
 | HTTPS only | Caddy redirects 80 → 443; HSTS (1 year); session cookies are `__Host-…; Secure; HttpOnly` (admin cookies `SameSite=Strict`) |
-| Private access | IP allow-list + shared basic auth at the edge, then the app's own login; admins additionally need an admin password + TOTP and an allow-listed IP |
+| Private access | IP allow-list + shared basic auth at the edge, then the app's own login; admins additionally need an admin password + TOTP and an allow-listed IP. `SITE_ACCESS=public` lifts basic auth from the web app's public pages only (see `DEPLOY_DIGITALOCEAN.md` §9a). |
 | No exposed internals | Only `caddy` publishes ports. `db`, `api`, `admin-api`, `web`, `worker` are on `internal: true` networks (no internet egress either). CI asserts this. |
 | Separate DB credentials | Five roles: superuser (init only), `safepay_migrator` (migrations, owner CLI), `safepay_app`, `safepay_system`, `safepay_admin`. Each container gets only its own. |
 | Public beta demo | `BETA_DEMO_MODE` (off by default): demo accounts may use deals without email verification; simulated money only, never mixed with other accounts. See `BETA_DEMO_MODE.md`. |
