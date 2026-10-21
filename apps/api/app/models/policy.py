@@ -22,5 +22,8 @@ class PlatformPolicy(Base):
 
     id: Mapped[bool] = mapped_column(Boolean, primary_key=True, server_default=text("true"))
     auto_release_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    # BETA_DEMO_MODE's database-side key: while false, the transition function refuses
+    # unverified actors even if the API lets demo accounts through. Owner-only.
+    beta_demo_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     note: Mapped[str] = mapped_column(String(200), server_default="")

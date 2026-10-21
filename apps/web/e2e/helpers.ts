@@ -52,6 +52,26 @@ export async function signUp(page: Page, name: string, email = uniqueEmail("user
   return email;
 }
 
+/**
+ * BETA_DEMO_MODE (demo project): register through the UI and sign in straight away,
+ * with no email verification at all.
+ */
+export async function signUpDemo(page: Page, name: string, email = uniqueEmail("demo")): Promise<string> {
+  await page.goto("/register");
+  await page.getByLabel("Таны нэр").fill(name);
+  await page.getByLabel("Имэйл").fill(email);
+  await page.getByLabel("Нууц үг", { exact: true }).fill(PASSWORD);
+  await page.getByLabel("Нууц үг давтах").fill(PASSWORD);
+  await page.getByRole("button", { name: "Бүртгүүлэх" }).click();
+  await expect(page.getByText("Одоо нэвтэрч болно")).toBeVisible();
+  await page.getByRole("main").getByRole("link", { name: "Нэвтрэх" }).click();
+  await page.getByLabel("Имэйл").fill(email);
+  await page.getByLabel("Нууц үг").fill(PASSWORD);
+  await page.getByRole("button", { name: "Нэвтрэх" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  return email;
+}
+
 export async function newUserPage(browser: Browser): Promise<Page> {
   const context = await browser.newContext();
   return context.newPage();

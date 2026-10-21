@@ -33,7 +33,8 @@ function Section({ n, title, children }: { n: number; title: string; children: R
   );
 }
 
-function Form() {
+/** `canRestrictInvite`: demo accounts (unverified email) cannot restrict invitations by email. */
+function Form({ canRestrictInvite }: { canRestrictInvite: boolean }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [role, setRole] = useState<Role>("SELLER");
@@ -117,15 +118,17 @@ function Form() {
         <Section n={2} title="Юу, хэдээр, яаж">
           <DealTermsFields errors={errors} />
         </Section>
-        <Section n={3} title="Хэнтэй (заавал биш)">
-          <Field
-            label={`${other} имэйл (заавал биш)`}
-            name="counterparty_email"
-            type="email"
-            autoComplete="off"
-            hint="Бичвэл урилгын холбоосоор зөвхөн энэ имэйлээр бүртгэлтэй хүн нэгдэж чадна."
-          />
-        </Section>
+        {canRestrictInvite ? (
+          <Section n={3} title="Хэнтэй (заавал биш)">
+            <Field
+              label={`${other} имэйл (заавал биш)`}
+              name="counterparty_email"
+              type="email"
+              autoComplete="off"
+              hint="Бичвэл урилгын холбоосоор зөвхөн энэ имэйлээр бүртгэлтэй хүн нэгдэж чадна."
+            />
+          </Section>
+        ) : null}
         {error ? <Alert tone="danger">{error}</Alert> : null}
         <div className="bg-surface-muted text-muted flex gap-2 rounded-xl p-3 text-[13px] leading-snug">
           <Icon name="info" className="mt-0.5 size-4" />
@@ -140,5 +143,5 @@ function Form() {
 }
 
 export function NewDealForm() {
-  return <AuthGuard verified>{() => <Form />}</AuthGuard>;
+  return <AuthGuard verified>{(me) => <Form canRestrictInvite={me.email_verified} />}</AuthGuard>;
 }

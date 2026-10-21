@@ -5,6 +5,8 @@
   session's ``csrf_hash`` (synchronizer token), on top of the Origin check
   done in middleware for every unsafe request.
 * No endpoint accepts a user id or actor from the client.
+* Deal workflows need a verified email, except for demo accounts while
+  ``BETA_DEMO_MODE`` is on (``may_transact``). Signing in never needs either.
 """
 
 import uuid
@@ -42,6 +44,19 @@ class AuthContext:
     display_name: str
     email_verified: bool
     is_admin: bool
+    is_demo: bool
+    can_transact: bool
+
+
+def may_transact(settings: Settings, *, email_verified: bool, is_demo: bool) -> bool:
+    """May this account create, join and act on deals?
+
+    Verified accounts always may. Demo accounts (registered while BETA_DEMO_MODE
+    was on) may without verification, but only while the mode is still on; turning
+    it off suspends unverified demo accounts' deal access without touching anyone
+    else. Non-demo accounts never skip verification.
+    """
+    return email_verified or (is_demo and settings.beta_demo_mode)
 
 
 def client_ip(request: Request, settings: Settings) -> str:
@@ -87,6 +102,10 @@ def _load(request: Request) -> AuthContext | None:
             display_name=user.display_name,
             email_verified=user.email_verified_at is not None,
             is_admin=is_admin,
+            is_demo=user.is_demo,
+            can_transact=may_transact(
+                settings, email_verified=user.email_verified_at is not None, is_demo=user.is_demo
+            ),
         )
         touch = settings.api_mode == "public" and now - sess.last_seen_at > TOUCH_INTERVAL
     if touch:
@@ -109,7 +128,8 @@ def require_user(request: Request) -> AuthContext:
 
 
 def require_verified_user(ctx: Annotated[AuthContext, Depends(require_user)]) -> AuthContext:
-    if not ctx.email_verified:
+    """Deal workflows: a verified email, or a demo account in BETA_DEMO_MODE."""
+    if not ctx.can_transact:
         raise ApiError(403, "email_not_verified", "verify your email address first")
     return ctx
 

@@ -82,7 +82,12 @@ def register(
         hash_password(password)  # keep timing comparable
         _outbox(db, email, "account_exists", {"login_url": f"{settings.public_web_url}/login"})
         return
-    user = User(email=email, password_hash=hash_password(password), display_name=display_name)
+    user = User(
+        email=email,
+        password_hash=hash_password(password),
+        display_name=display_name,
+        is_demo=settings.beta_demo_mode,
+    )
     db.add(user)
     try:
         db.flush()

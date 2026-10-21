@@ -7,11 +7,15 @@ import { api } from "@/lib/client/api";
 import { useRequireSession } from "@/lib/client/session";
 import type { Me } from "@/lib/types";
 
-/** Renders children only for signed-in users (redirecting others to /login). */
+/**
+ * Renders children only for signed-in users (redirecting others to /login).
+ * `verified` pages (deal workflows) also need `can_transact`: a verified email, or a
+ * demo account while the public beta demo mode is on. The API enforces the same rule.
+ */
 export function AuthGuard({ children, verified = false }: { children: (me: Me) => ReactNode; verified?: boolean }) {
   const session = useRequireSession();
   if (session.status !== "authenticated") return <Skeleton />;
-  if (verified && !session.me.email_verified) return <VerifyFirst email={session.me.email} />;
+  if (verified && !session.me.can_transact) return <VerifyFirst email={session.me.email} />;
   return <>{children(session.me)}</>;
 }
 

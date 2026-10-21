@@ -22,6 +22,10 @@ export type Me = {
   phone_e164: string | null;
   email_verified: boolean;
   is_admin: boolean;
+  /** Registered while the public beta demo mode was on (simulated money only). */
+  is_demo: boolean;
+  /** May create, join and act on deals now (verified, or a demo account in demo mode). */
+  can_transact: boolean;
   created_at: string;
 };
 
@@ -50,6 +54,7 @@ export type Deal = {
   auto_release_at: string | null;
   status_changed_at: string;
   created_at: string;
+  is_demo: boolean;
 };
 
 export type DealSummary = {
@@ -171,6 +176,7 @@ export type AdminUser = {
   status: "ACTIVE" | "SUSPENDED";
   email_verified: boolean;
   is_admin: boolean;
+  is_demo: boolean;
   created_at: string;
 };
 

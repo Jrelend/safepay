@@ -2,7 +2,17 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, CreatedAtMixin, UUIDPrimaryKeyMixin, str_enum
@@ -36,6 +46,9 @@ class User(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Registered while BETA_DEMO_MODE was on. Set once at insert (the runtime role
+    # cannot update it); demo accounts only ever share deals with demo accounts.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
 
 class Admin(Base):

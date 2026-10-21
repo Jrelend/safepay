@@ -6,6 +6,7 @@ owner credential (MIGRATION_DATABASE_URL). The admin API cannot create admins.
     python -m app.cli reset-admin-credentials someone@example.com
     python -m app.cli revoke-admin someone@example.com
     python -m app.cli set-auto-release off --note "beta policy"   # default: off
+    python -m app.cli set-beta-demo on --note "public beta demo"   # default: off
     python -m app.cli outbox tester@example.com   # simulated emails (no real email yet)
 """
 
@@ -163,6 +164,35 @@ def set_auto_release(enabled: bool, note: str) -> None:
     print(f"automatic release {'ENABLED' if enabled else 'disabled'}")
 
 
+def set_beta_demo(enabled: bool, note: str) -> None:
+    """Owner-only: the database side of BETA_DEMO_MODE (must match the API setting).
+
+    A no-op when already in the requested state, so deploys can run it every time.
+    """
+    with _engine().begin() as conn:
+        old = conn.execute(
+            text("SELECT beta_demo_enabled FROM platform_policy WHERE id FOR UPDATE")
+        ).scalar_one()
+        if old == enabled:
+            print(f"beta demo policy unchanged ({'on' if enabled else 'off'})")
+            return
+        conn.execute(
+            text("UPDATE platform_policy SET beta_demo_enabled = :e, note = :n WHERE id"),
+            {"e": enabled, "n": note[:200]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO audit_events (actor_type, action, entity_type, entity_id, data) "
+                "VALUES ('SYSTEM', 'policy.beta_demo_changed', 'platform_policy', "
+                "'00000000-0000-0000-0000-000000000000', "
+                "jsonb_build_object('from', CAST(:o AS boolean), 'to', CAST(:e AS boolean), "
+                "'note', CAST(:n AS text)))"
+            ),
+            {"o": old, "e": enabled, "n": note[:200]},
+        )
+    print(f"beta demo policy {'ON' if enabled else 'off'}")
+
+
 def show_outbox(email: str, limit: int) -> None:
     """Owner-only: print recent simulated emails (no real email in Beta v0.1).
 
@@ -199,6 +229,9 @@ def main() -> None:
     a = sub.add_parser("set-auto-release")
     a.add_argument("state", choices=["on", "off"])
     a.add_argument("--note", default="")
+    d = sub.add_parser("set-beta-demo")
+    d.add_argument("state", choices=["on", "off", "true", "false"])
+    d.add_argument("--note", default="")
     o = sub.add_parser("outbox")
     o.add_argument("email")
     o.add_argument("--limit", type=int, default=5)
@@ -211,6 +244,8 @@ def main() -> None:
         revoke_admin(args.email)
     elif args.command == "set-auto-release":
         set_auto_release(args.state == "on", args.note)
+    elif args.command == "set-beta-demo":
+        set_beta_demo(args.state in ("on", "true"), args.note)
     else:
         show_outbox(args.email, args.limit)
 

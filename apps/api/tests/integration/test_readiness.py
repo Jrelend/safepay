@@ -24,6 +24,8 @@ def test_ready_as_least_privileged_app_role(app_engine: Engine) -> None:
             "database": {"ok": True, "detail": None},
             "migrations": {"ok": True, "detail": None},
             "db_role": {"ok": True, "detail": None},
+            # BETA_DEMO_MODE (off) matches the database policy (off).
+            "beta_demo": {"ok": True, "detail": None},
         },
     }
 

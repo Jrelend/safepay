@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -53,6 +55,7 @@ class Deal(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         ),
         Index("ix_deals_status", "status"),
         Index("ix_deals_status_status_changed_at", "status", "status_changed_at"),
+        Index("ix_deals_is_demo", "is_demo"),
     )
 
     # Short human-friendly reference shown in the UI (e.g. SP-7KQ2M9).
@@ -86,6 +89,9 @@ class Deal(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # Optional: only this (normalized) email may join via the link.
     invite_email: Mapped[str | None] = mapped_column(String(254))
     created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    # Demo deal (BETA_DEMO_MODE): always equal to the creator's users.is_demo, set at
+    # insert and never updated; the database refuses mixed demo/non-demo deals.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # Optimistic concurrency control: every state change must bump the version.
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     updated_at: Mapped[datetime] = mapped_column(

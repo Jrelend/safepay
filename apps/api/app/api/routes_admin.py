@@ -96,6 +96,7 @@ class UserOut(BaseModel):
     status: UserStatus
     email_verified: bool
     is_admin: bool
+    is_demo: bool
     created_at: datetime
 
 
@@ -324,6 +325,7 @@ def users(_: AdminUser, db: DbDep, q: str = "") -> list[UserOut]:
             status=u.status,
             email_verified=u.email_verified_at is not None,
             is_admin=u.id in admins,
+            is_demo=u.is_demo,
             created_at=u.created_at,
         )
         for u in db.scalars(stmt)

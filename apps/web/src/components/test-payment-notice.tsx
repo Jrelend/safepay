@@ -2,6 +2,8 @@ import { Icon } from "@/components/icons";
 
 /** Mandatory notice on every screen that shows or moves (simulated) money. */
 export const TEST_PAYMENT_LABEL = "ТУРШИЛТЫН ТӨЛБӨР — БОДИТ МӨНГӨ БИШ";
+/** The same message in English, shown with it throughout the user workflow. */
+export const DEMO_LABEL = "DEMO — SIMULATED MONEY — NO REAL PAYMENTS";
 
 export function TestPaymentNotice({ detail }: { detail?: string }) {
   return (
@@ -13,6 +15,9 @@ export function TestPaymentNotice({ detail }: { detail?: string }) {
       <Icon name="flask" className="mt-0.5 size-[18px]" />
       <div className="min-w-0">
         <div className="text-[13px] font-extrabold tracking-wide">{TEST_PAYMENT_LABEL}</div>
+        <div lang="en" data-testid="demo-label" className="text-[11px] font-bold tracking-wide">
+          {DEMO_LABEL}
+        </div>
         {detail ? <div className="text-foreground mt-0.5 text-xs leading-snug">{detail}</div> : null}
       </div>
     </div>

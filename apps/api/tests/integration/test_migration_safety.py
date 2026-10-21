@@ -58,7 +58,7 @@ def _scalar(engine: Engine, sql: str) -> object:
 
 def test_new_database_initializes_with_correct_ownership(fresh_db: Engine) -> None:
     command.upgrade(_alembic(), "head")
-    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0005"
+    assert _scalar(fresh_db, "SELECT version_num FROM alembic_version") == "0006"
     assert (
         _scalar(
             fresh_db,

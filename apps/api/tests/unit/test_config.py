@@ -28,3 +28,19 @@ def test_simulation_only_rejects_garbage(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_defaults_are_simulation_only() -> None:
     assert Settings().payments_simulation_only is True
+
+
+def test_beta_demo_mode_is_off_by_default() -> None:
+    assert Settings().beta_demo_mode is False
+
+
+def test_production_refuses_beta_demo_mode() -> None:
+    prod = {
+        "app_env": "production",
+        "public_web_url": "https://safepay.example",
+        "cors_allowed_origins": ["https://safepay.example"],
+    }
+    Settings(**prod)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="BETA_DEMO_MODE must be false"):
+        Settings(**prod, beta_demo_mode=True)  # type: ignore[arg-type]
+    assert Settings(**{**prod, "app_env": "staging"}, beta_demo_mode=True).beta_demo_mode  # type: ignore[arg-type]
