@@ -69,7 +69,13 @@ function Content({ me }: { me: Me }) {
   return (
     <div className={`${WIDTH.form} space-y-4`}>
       <PageTitle title="Профайл" />
-      {!me.email_verified ? <VerifyFirst email={me.email} /> : null}
+      {me.is_demo ? (
+        <Alert tone="warning" title="Демо бүртгэл">
+          Энэ бол туршилтын демо бүртгэл: зөвхөн симуляц мөнгөөр, бусад демо хэрэглэгчидтэй гэрээ хийнэ. Бодит мөнгө
+          огт шилжихгүй.
+        </Alert>
+      ) : null}
+      {!me.can_transact ? <VerifyFirst email={me.email} /> : null}
       <Card>
         <DefinitionList
           items={[

@@ -2,7 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 /**
  * Browser E2E against a running stack (see scripts/e2e-stack.sh).
- * The origin must be http://localhost:3000: the API's Origin check allows only it.
+ * Each web origin must be the one its API allows (Origin check):
+ *   "standard" → http://localhost:3000 (email verification required)
+ *   "demo"     → http://localhost:3001 (BETA_DEMO_MODE, demo-*.spec.ts)
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -20,4 +22,12 @@ export default defineConfig({
     trace: "retain-on-failure",
     launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
   },
+  projects: [
+    { name: "standard", testIgnore: /demo-.*\.spec\.ts/ },
+    {
+      name: "demo",
+      testMatch: /demo-.*\.spec\.ts/,
+      use: { baseURL: process.env.E2E_DEMO_BASE_URL ?? "http://localhost:3001" },
+    },
+  ],
 });

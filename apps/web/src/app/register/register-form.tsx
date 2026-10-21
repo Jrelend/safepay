@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
+import { Alert, Button, buttonClass, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
 
 export function RegisterForm() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [verificationRequired, setVerificationRequired] = useState(true);
   const [busy, setBusy] = useState(false);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -23,15 +24,31 @@ export function RegisterForm() {
     setError(null);
     try {
       const email = String(form.get("email")).trim();
-      await api("/auth/register", {
+      const res = await api<{ verification_required?: boolean }>("/auth/register", {
         json: { email, password, display_name: String(form.get("display_name")).trim() },
       });
+      setVerificationRequired(res?.verification_required !== false);
       setDone(email);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Алдаа гарлаа.");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (done && !verificationRequired) {
+    return (
+      <div className={`${WIDTH.narrow} space-y-4`}>
+        <PageTitle title="Бүртгэл үүслээ" />
+        <Alert tone="success" title="Одоо нэвтэрч болно">
+          Демо горим: имэйл баталгаажуулах шаардлагагүй. <strong>{done}</strong> хаягаар нэвтэрч, симуляц мөнгөөр
+          гэрээ хийж туршаарай. Бодит мөнгө огт шилжихгүй.
+        </Alert>
+        <Link href="/login" className={buttonClass("primary", "md", "w-full")}>
+          Нэвтрэх
+        </Link>
+      </div>
+    );
   }
 
   if (done) {

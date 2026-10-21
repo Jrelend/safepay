@@ -38,7 +38,14 @@ def test_registration_does_not_reveal_existing_accounts(browser: Browser, engine
     b = other.post(
         "/auth/register", json={"email": fresh, "password": PASSWORD, "display_name": "Хэрэглэгч"}
     )
-    assert (a.status_code, a.json()) == (b.status_code, b.json()) == (202, {"status": "accepted"})
+    assert (
+        (a.status_code, a.json())
+        == (b.status_code, b.json())
+        == (
+            202,
+            {"status": "accepted", "verification_required": True},
+        )
+    )
     # The real owner is told by (simulated) email instead.
     with engine.connect() as conn:
         assert (
@@ -82,6 +89,8 @@ def test_password_hash_never_returned(browser: Browser, engine: Engine) -> None:
         "phone_e164",
         "email_verified",
         "is_admin",
+        "is_demo",
+        "can_transact",
         "created_at",
     }
 

@@ -39,6 +39,10 @@ x-api-env: &api-env
   COOKIE_SECURE: "true"
   TRUST_PROXY_HEADERS: "true"
   DEV_MAILBOX_ENABLED: "false"
+  # Public beta demo: new accounts skip email verification (demo accounts, simulated
+  # money, never mixed with other accounts). Off unless set in .env.staging; the
+  # migrate step syncs the owner-only database policy to the same value.
+  BETA_DEMO_MODE: ${BETA_DEMO_MODE:-false}
 
 services:
   db:
@@ -76,7 +80,14 @@ services:
     restart: "no"
     read_only: true
     tmpfs: ["/tmp:mode=1777"]
-    command: ["alembic", "upgrade", "head"]
+    # Migrate, then make the owner-only DB policy match BETA_DEMO_MODE (a no-op when it
+    # already does; changes are audited). The API's /ready fails if the two differ.
+    command:
+      - sh
+      - -c
+      - >-
+        alembic upgrade head &&
+        python -m app.cli set-beta-demo "$${BETA_DEMO_MODE}" --note "deploy: BETA_DEMO_MODE"
     environment:
       <<: *api-env
       MIGRATION_DATABASE_URL: postgresql+psycopg://safepay_migrator:${SAFEPAY_MIGRATOR_PASSWORD}@db:5432/${POSTGRES_DB:-safepay}

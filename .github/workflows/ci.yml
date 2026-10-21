@@ -144,7 +144,7 @@ jobs:
         working-directory: apps/web
       - run: npx playwright install --with-deps chromium
         working-directory: apps/web
-      - name: Start stack (public API, admin API, web)
+      - name: Start stack (public API, admin API, web; plus a BETA_DEMO_MODE API + web)
         run: ./scripts/e2e-stack.sh
       - name: Playwright
         run: npx playwright test
@@ -378,6 +378,33 @@ jobs:
           scripts/staging-wait.sh
           test "$(q "SELECT string_agg(email, ',') FROM users")" = "before@example.com"
           $C https://$STAGING_DOMAIN/ | grep -q 'lang="mn"'
+      - name: BETA_DEMO_MODE on and off (API setting and owner-only DB policy stay in sync)
+        run: |
+          dc() { docker compose -f compose.staging.yaml --env-file .env.staging "$@"; }
+          A="curl -sk --resolve $STAGING_DOMAIN:443:127.0.0.1 -u safepay-beta:ci-basic-pass"
+          ready() { dc exec -T api python -c "import json,urllib.request as u; print(json.load(u.urlopen('http://127.0.0.1:8000/ready'))['checks']['beta_demo']['ok'])"; }
+          policy() { dc exec -T db psql -U postgres -d safepay -At -c 'SELECT beta_demo_enabled FROM platform_policy'; }
+          test "$(policy)" = "f" && test "$(ready)" = "True"
+          echo "BETA_DEMO_MODE=true" >> .env.staging
+          dc up -d migrate api
+          scripts/staging-wait.sh
+          test "$(policy)" = "t" && test "$(ready)" = "True"
+          # An unverified demo account signs in and creates a deal through the proxy.
+          $A -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"demo@example.com","password":"Correct-Horse-Battery-9","display_name":"Demo"}' https://$STAGING_DOMAIN/api/auth/register
+          $A -c demo-jar -o /dev/null -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+            -d '{"email":"demo@example.com","password":"Correct-Horse-Battery-9"}' https://$STAGING_DOMAIN/api/auth/login
+          CSRF=$(awk '$6 == "__Host-safepay_csrf" {print $7}' demo-jar)
+          deal='{"title":"Demo deal","amount_mnt":1000,"item_type":"SERVICE","delivery_method":"DIGITAL","inspection_days":3,"my_role":"SELLER"}'
+          test "$($A -b demo-jar -o /dev/null -w '%{http_code}' -X POST -H "Origin: $ORIGIN" -H "X-CSRF-Token: $CSRF" \
+            -H 'content-type: application/json' -d "$deal" https://$STAGING_DOMAIN/api/deals)" = "201"
+          # Back off: policy follows, and the unverified demo account is locked out of deals again.
+          sed -i '/^BETA_DEMO_MODE=true$/d' .env.staging
+          dc up -d migrate api
+          scripts/staging-wait.sh
+          test "$(policy)" = "f" && test "$(ready)" = "True"
+          test "$($A -b demo-jar -o /dev/null -w '%{http_code}' -X POST -H "Origin: $ORIGIN" -H "X-CSRF-Token: $CSRF" \
+            -H 'content-type: application/json' -d "$deal" https://$STAGING_DOMAIN/api/deals)" = "403"
       - name: Logs on failure
         if: failure()
         run: docker compose -f compose.staging.yaml --env-file .env.staging logs --no-color --tail 200

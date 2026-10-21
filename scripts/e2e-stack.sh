@@ -5,7 +5,9 @@
 #   E2E_DB                            database to (re)create, must end in _e2e
 #
 # Starts: public API :8000 (safepay_app), admin API :8001 (safepay_admin),
-# web :3000 (next start). Logs go to $E2E_LOG_DIR. All payments are simulated.
+# web :3000 (next start); and, sharing the same database, a BETA_DEMO_MODE pair:
+# public API :8002 + web :3001 (demo-*.spec.ts). Logs go to $E2E_LOG_DIR.
+# All payments are simulated.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,21 +32,34 @@ psql -d "$E2E_DB" -v ON_ERROR_STOP=1 -q -v dbname="$E2E_DB" \
 export MIGRATION_DATABASE_URL="postgresql+psycopg://safepay_migrator:$MIGRATOR_PW@$HOST/$E2E_DB"
 cd "$ROOT/apps/api"
 uv run alembic upgrade head
+# The database side of BETA_DEMO_MODE (owner-only). It only ever affects demo accounts,
+# which only the :8002 API creates; the :8000 API keeps requiring verification.
+uv run python -m app.cli set-beta-demo on --note "e2e demo stack"
 
 common=(APP_ENV=test DEV_MAILBOX_ENABLED=true PUBLIC_WEB_URL=http://localhost:3000
         'CORS_ALLOWED_ORIGINS=["http://localhost:3000"]' TRUST_PROXY_HEADERS=true)
 env "${common[@]}" API_MODE=public \
   DATABASE_URL="postgresql+psycopg://safepay_app:$APP_PW@$HOST/$E2E_DB" \
   nohup uv run uvicorn app.main:app --port 8000 >"$LOG_DIR/api.log" 2>&1 &
+env "${common[@]}" API_MODE=public BETA_DEMO_MODE=true PUBLIC_WEB_URL=http://localhost:3001 \
+  'CORS_ALLOWED_ORIGINS=["http://localhost:3001"]' \
+  DATABASE_URL="postgresql+psycopg://safepay_app:$APP_PW@$HOST/$E2E_DB" \
+  nohup uv run uvicorn app.main:app --port 8002 >"$LOG_DIR/api-demo.log" 2>&1 &
 env "${common[@]}" API_MODE=admin DEV_MAILBOX_ENABLED=false \
+  'CORS_ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3001"]' \
   DATABASE_URL="postgresql+psycopg://safepay_admin:$ADMIN_PW@$HOST/$E2E_DB" \
   nohup uv run uvicorn app.main:app --port 8001 >"$LOG_DIR/admin-api.log" 2>&1 &
 
 cd "$ROOT/apps/web"
 API_INTERNAL_URL=http://127.0.0.1:8000 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8001 PORT=3000 ENABLE_DEV_ROUTES=true \
   nohup npx next start >"$LOG_DIR/web.log" 2>&1 &
+API_INTERNAL_URL=http://127.0.0.1:8002 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8001 PORT=3001 \
+  nohup npx next start >"$LOG_DIR/web-demo.log" 2>&1 &
 
-for url in http://127.0.0.1:8000/ready http://127.0.0.1:8001/ready http://127.0.0.1:3000/; do
+# :8000 is not "ready" by design here: its BETA_DEMO_MODE (off) differs from the shared
+# database's demo policy (on), which /ready reports. Liveness is enough for it.
+for url in http://127.0.0.1:8000/health http://127.0.0.1:8001/ready http://127.0.0.1:8002/ready \
+           http://127.0.0.1:3000/ http://127.0.0.1:3001/; do
   curl -fsS --retry 40 --retry-delay 1 --retry-all-errors -o /dev/null "$url"
 done
 echo "E2E stack ready (db=$E2E_DB). Admin grants: MIGRATION_DATABASE_URL=$MIGRATION_DATABASE_URL"

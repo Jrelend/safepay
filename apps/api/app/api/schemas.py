@@ -46,6 +46,8 @@ class DealOut(BaseModel):
     auto_release_at: datetime | None
     status_changed_at: datetime
     created_at: datetime
+    # Demo deal (BETA_DEMO_MODE): simulated money, between demo accounts only.
+    is_demo: bool
 
 
 class TimelineEventOut(BaseModel):

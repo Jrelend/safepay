@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # set, the DB still refuses unless platform_policy.auto_release_enabled is true.
     worker_auto_release: bool = False
 
+    # Public beta demo: newly registered accounts are marked as demo accounts and may
+    # use deal workflows without verifying their email. Demo accounts and their deals
+    # are flagged in the database and never mixed with other accounts. All money is
+    # simulated either way; refused in production.
+    beta_demo_mode: bool = False
+
     # Hard safety switch: SafePay Beta must never move real money. Any value
     # other than true is rejected at startup.
     payments_simulation_only: bool = True
@@ -83,6 +89,8 @@ class Settings(BaseSettings):
         problems = []
         if self.dev_mailbox_enabled:
             problems.append("DEV_MAILBOX_ENABLED must be false")
+        if self.app_env == "production" and self.beta_demo_mode:
+            problems.append("BETA_DEMO_MODE must be false")
         if self.cookie_secure is False:
             problems.append("COOKIE_SECURE must not be false")
         if not self.public_web_url.startswith("https://"):

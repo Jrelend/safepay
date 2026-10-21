@@ -165,6 +165,9 @@ def _load(request: Request) -> tuple[AuthContext, datetime] | None:
             display_name=user.display_name,
             email_verified=True,
             is_admin=True,
+            is_demo=user.is_demo,
+            # Admin sessions decide disputes as ADMIN; they never act as a deal party.
+            can_transact=False,
         )
         if now - sess.last_seen_at > TOUCH_INTERVAL:
             db.execute(

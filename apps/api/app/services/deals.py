@@ -100,6 +100,7 @@ def create_deal(
 ) -> tuple[Deal, str]:
     """Returns the deal and the raw invite token (shown to the creator once)."""
     check_terms(terms.item_type, terms.delivery_method)
+    creator = db.get_one(User, creator_id)
     token = new_token()
     for _ in range(5):
         deal = Deal(
@@ -113,6 +114,8 @@ def create_deal(
             created_by_id=creator_id,
             invite_token_hash=sha256_hex(token),
             invite_email=invite_email,
+            # A demo account's deals are demo deals (the database enforces this too).
+            is_demo=creator.is_demo,
         )
         try:
             with db.begin_nested():
@@ -223,8 +226,14 @@ def preview_invite(db: Session, *, token: str, user_id: uuid.UUID, email: str) -
         raise InviteError("self_deal" if deal.created_by_id == user_id else "already_joined")
     if len(participants) >= 2:
         raise InviteError("invite_used")
-    if deal.invite_email and deal.invite_email != email:
+    joiner = db.get_one(User, user_id)
+    # An email-restricted link is only as strong as the joiner's proof of that address:
+    # demo accounts never verify theirs, so they cannot claim a restricted invitation.
+    if deal.invite_email and (deal.invite_email != email or joiner.email_verified_at is None):
         raise InviteError("invite_restricted")
+    # Demo and non-demo accounts never share a deal (also enforced by a DB trigger).
+    if joiner.is_demo != deal.is_demo:
+        raise InviteError("demo_mismatch")
     creator_role = participants[0].role
     offered = (
         ParticipantRole.SELLER if creator_role is ParticipantRole.BUYER else ParticipantRole.BUYER

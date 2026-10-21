@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.auth_context import CurrentUser, VerifiedUser, client_ip
+from app.api.auth_context import AuthContext, CurrentUser, VerifiedUser, client_ip
 from app.api.deps import SettingsDep
 from app.api.errors import ApiError
 from app.api.routes_auth import limit
@@ -102,9 +102,14 @@ class ActionOut(BaseModel):
     ledger_transaction_id: uuid.UUID | None
 
 
-def _invite_email(raw: str | None) -> str | None:
+def _invite_email(raw: str | None, ctx: AuthContext) -> str | None:
     if not raw:
         return None
+    if not ctx.email_verified:
+        # Demo accounts: nobody could prove that address when joining (see join_deal).
+        raise ApiError(
+            422, "invite_email_unavailable", "email-restricted invitations need a verified email"
+        )
     try:
         return normalize_email(raw)
     except InvalidEmailError as exc:
@@ -137,6 +142,7 @@ def _deal_out(view: svc.DealView) -> DealOut:
         auto_release_at=view.auto_release_at,
         status_changed_at=d.status_changed_at,
         created_at=d.created_at,
+        is_demo=d.is_demo,
     )
 
 
@@ -156,7 +162,7 @@ def create_deal(
     body: CreateDealIn, ctx: VerifiedUser, request: Request, db: DbDep, settings: SettingsDep
 ) -> CreatedDealOut:
     limit(request, rl.MUTATION_PER_USER, str(ctx.user_id))
-    invite_email = _invite_email(body.counterparty_email)
+    invite_email = _invite_email(body.counterparty_email, ctx)
     if invite_email == ctx.email:
         raise ApiError(422, "self_deal", "you cannot make a deal with yourself")
     try:
@@ -242,7 +248,7 @@ def update_draft(
 def regenerate_invite(
     deal_id: uuid.UUID, body: InviteIn, ctx: VerifiedUser, db: DbDep, settings: SettingsDep
 ) -> InviteOut:
-    invite_email = _invite_email(body.counterparty_email)
+    invite_email = _invite_email(body.counterparty_email, ctx)
     if invite_email == ctx.email:
         raise ApiError(422, "self_deal", "you cannot make a deal with yourself")
     try:
@@ -263,6 +269,7 @@ _INVITE_STATUS = {
     "already_joined": 409,
     "self_deal": 422,
     "invite_restricted": 403,
+    "demo_mismatch": 403,
 }
 
 

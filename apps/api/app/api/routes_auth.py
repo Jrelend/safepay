@@ -15,6 +15,7 @@ from app.api.auth_context import (
     CurrentUser,
     client_ip,
     csrf_cookie_name,
+    may_transact,
     session_cookie_name,
 )
 from app.api.deps import SettingsDep
@@ -34,6 +35,11 @@ PHONE_RE = re.compile(r"^\+[1-9]\d{7,14}$")
 
 class Accepted(BaseModel):
     status: Literal["accepted"] = "accepted"
+
+
+class RegisterAccepted(Accepted):
+    # Depends only on the server's mode, never on the address (no account enumeration).
+    verification_required: bool = True
 
 
 class RegisterIn(BaseModel):
@@ -77,6 +83,10 @@ class MeOut(BaseModel):
     phone_e164: str | None
     email_verified: bool
     is_admin: bool
+    # Demo account (BETA_DEMO_MODE): simulated-money demo; see docs/BETA_DEMO_MODE.md.
+    is_demo: bool
+    # May create, join and act on deals right now (verified, or demo while the mode is on).
+    can_transact: bool
     created_at: datetime
 
 
@@ -121,21 +131,28 @@ def _clear_auth_cookies(response: Response, settings: Settings) -> None:
         response.delete_cookie(name, path="/", secure=settings.secure_cookies, samesite="lax")
 
 
-def _me(db: Session, user_id: uuid.UUID, is_admin: bool) -> MeOut:
+def _me(db: Session, settings: Settings, user_id: uuid.UUID, is_admin: bool) -> MeOut:
     user = db.get_one(User, user_id)
+    verified = user.email_verified_at is not None
     return MeOut(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         phone_e164=user.phone_e164,
-        email_verified=user.email_verified_at is not None,
+        email_verified=verified,
         is_admin=is_admin,
+        is_demo=user.is_demo,
+        can_transact=may_transact(settings, email_verified=verified, is_demo=user.is_demo),
         created_at=user.created_at,
     )
 
 
-@router.post("/auth/register", status_code=status.HTTP_202_ACCEPTED, response_model=Accepted)
-def register(body: RegisterIn, request: Request, db: DbDep, settings: SettingsDep) -> Accepted:
+@router.post(
+    "/auth/register", status_code=status.HTTP_202_ACCEPTED, response_model=RegisterAccepted
+)
+def register(
+    body: RegisterIn, request: Request, db: DbDep, settings: SettingsDep
+) -> RegisterAccepted:
     limit(request, rl.REGISTER_PER_IP, client_ip(request, settings))
     try:
         with atomic(db):
@@ -150,7 +167,7 @@ def register(body: RegisterIn, request: Request, db: DbDep, settings: SettingsDe
         raise ApiError(422, "invalid_email", "email address is not valid") from exc
     except WeakPasswordError as exc:
         raise ApiError(422, "weak_password", str(exc)) from exc
-    return Accepted()
+    return RegisterAccepted(verification_required=not settings.beta_demo_mode)
 
 
 @router.post("/auth/verify-email")
@@ -197,7 +214,7 @@ def login(
                 ip=ip,
             )
             is_admin = db.scalar(select(Admin.user_id).where(Admin.user_id == user.id)) is not None
-            me = _me(db, user.id, is_admin)
+            me = _me(db, settings, user.id, is_admin)
     except accounts.InvalidCredentialsError as exc:
         raise ApiError(401, "invalid_credentials", "email or password is incorrect") from exc
     except accounts.AccountSuspendedError as exc:
@@ -266,8 +283,8 @@ def change_password(
 
 
 @router.get("/auth/me", response_model=MeOut)
-def me(ctx: CurrentUser, db: DbDep) -> MeOut:
-    return _me(db, ctx.user_id, ctx.is_admin)
+def me(ctx: CurrentUser, db: DbDep, settings: SettingsDep) -> MeOut:
+    return _me(db, settings, ctx.user_id, ctx.is_admin)
 
 
 @router.get("/auth/sessions", response_model=list[SessionOut])
@@ -315,7 +332,9 @@ def revoke_other_sessions(ctx: CurrentUser, db: DbDep) -> dict[str, str]:
 
 
 @router.patch("/me/profile", response_model=MeOut)
-def update_profile(ctx: CurrentUser, body: ProfileIn, request: Request, db: DbDep) -> MeOut:
+def update_profile(
+    ctx: CurrentUser, body: ProfileIn, request: Request, db: DbDep, settings: SettingsDep
+) -> MeOut:
     # Bounded: the phone_taken response would otherwise allow fast enumeration.
     limit(request, rl.PROFILE_PER_USER, str(ctx.user_id))
     if (
@@ -333,4 +352,4 @@ def update_profile(ctx: CurrentUser, body: ProfileIn, request: Request, db: DbDe
                 user.phone_e164 = body.phone_e164 or None
     except IntegrityError as exc:
         raise ApiError(409, "phone_taken", "this phone number is already used") from exc
-    return _me(db, ctx.user_id, ctx.is_admin)
+    return _me(db, settings, ctx.user_id, ctx.is_admin)

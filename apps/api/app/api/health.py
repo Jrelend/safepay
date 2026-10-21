@@ -108,6 +108,18 @@ def ready(
                 )
             else:
                 checks["db_role"] = CheckResult(ok=True)
+            if settings.api_mode == "public":
+                # BETA_DEMO_MODE needs both keys: this API setting and the owner-set DB policy.
+                policy = conn.execute(
+                    text("SELECT beta_demo_enabled FROM platform_policy WHERE id")
+                ).scalar_one()
+                checks["beta_demo"] = CheckResult(
+                    ok=policy == settings.beta_demo_mode,
+                    detail=None
+                    if policy == settings.beta_demo_mode
+                    else f"BETA_DEMO_MODE={str(settings.beta_demo_mode).lower()} but the "
+                    f"database policy is {'on' if policy else 'off'} (app.cli set-beta-demo)",
+                )
     except SQLAlchemyError as exc:
         # Do not leak connection strings or driver internals to callers.
         logger.warning("readiness check failed: %s", type(exc).__name__)

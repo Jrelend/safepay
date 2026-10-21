@@ -64,6 +64,7 @@ function Content() {
                 <div className="min-w-0">
                   <div className="font-medium">
                     {u.display_name} {u.is_admin ? <span className="text-brand text-xs">· админ</span> : null}
+                    {u.is_demo ? <span className="text-warning text-xs"> · демо</span> : null}
                   </div>
                   <div className="text-muted text-xs break-all">{u.email}</div>
                 </div>
