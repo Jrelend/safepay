@@ -177,6 +177,9 @@ services:
       CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS (internal, or your ACME email)}
       ALLOWED_IPS: ${ALLOWED_IPS:?set ALLOWED_IPS (space-separated CIDRs)}
       ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:?set ADMIN_ALLOWED_IPS (space-separated CIDRs)}
+      # private (default): basic auth on the whole web site; public: only on the admin
+      # area. The API host is always behind basic auth. See infra/caddy/Caddyfile.
+      SITE_ACCESS: ${SITE_ACCESS:-private}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER:?set BASIC_AUTH_USER}
       BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?set BASIC_AUTH_HASH (caddy hash-password)}
     volumes:

@@ -131,7 +131,9 @@ From here on, `DROPLET_IP` is the droplet's public IPv4 address, for example
 | `api.safepay.dhdbot.xyz` | The public API only, at the root (e.g. `/auth/me`, `/deals`) | Non-browser clients such as scripts and future mobile apps. It serves no pages. The admin API, `/docs`, `/openapi.json`, `/health`, `/ready` and `/dev/*` return 404 there. |
 
 Both hostnames sit behind the same edge controls: IP allow-list, shared basic auth,
-TLS, and HSTS **without** `includeSubDomains`.
+TLS, and HSTS **without** `includeSubDomains`. With `SITE_ACCESS=public` (§9a), basic
+auth is lifted from the web app's public pages only; the admin area and the API host
+keep it.
 
 Why the browser does not call `api.safepay.dhdbot.xyz` directly:
 - The session and CSRF cookies are `__Host-` cookies: host-only, with no `Domain`
@@ -306,6 +308,7 @@ hash. In `.env.staging`, set:
 | `CADDY_TLS` | `internal` for the first smoke test; then your email address, so Caddy obtains Let's Encrypt certificates for both names |
 | `ALLOWED_IPS` | testers' networks, or keep `"0.0.0.0/0 ::/0"` and rely on basic auth |
 | `ADMIN_ALLOWED_IPS` | `"YOUR_IP/32"`; the admin area is unreachable from anywhere else |
+| `SITE_ACCESS` | `private` (default): basic auth on the whole web site. Leave it until §9a. |
 | `BACKUP_AGE_RECIPIENT` | the `age1...` public key from step 2.3 |
 
 Store the basic-auth password and a copy of `.env.staging` in your password manager.
@@ -345,7 +348,8 @@ The script runs these steps in order and stops on the first failure:
 6. **Wait:** until every service is healthy.
 7. **Smoke test:**
    - only Caddy publishes ports, 80/443 only;
-   - HTTP redirects to HTTPS, and HTTPS returns 401 for basic auth;
+   - HTTP redirects to HTTPS; the API host and the admin area return 401/403 without
+     the basic-auth login; the web site returns 401 (`private`) or 200 (`public`);
    - `/ready` passes (database, migrations at head, least-privileged role);
    - payments are simulation-only;
    - automatic release is disabled.
@@ -455,6 +459,42 @@ How rollback behaves:
 
 Deploy history (time, from/to commit, backup used, schema) is kept in
 `~/safepay/.deploy/history`.
+
+## 9a. Opening the web app to the public — 🔒 APPROVAL (exposes the site)
+
+`SITE_ACCESS` in `.env.staging` decides who must enter the shared basic-auth login:
+
+| | `private` (default) | `public` |
+|---|---|---|
+| Web app pages and `/api/*` (`safepay.dhdbot.xyz`) | basic auth | **open**: the app's own login, CSRF/Origin checks and rate limits protect it |
+| Admin area (`/admin*`, `/api/admin*`) | admin IP allow-list + basic auth + admin password + TOTP | **unchanged** |
+| API host (`api.safepay.dhdbot.xyz`) | basic auth | **unchanged** (basic auth) |
+| `/dev/*`, `/api/dev/*`, `/api/health`, docs | 404 | 404 |
+| Payments | simulated | simulated |
+
+Any other value (including empty or a typo) makes Caddy refuse to start, and the deploy
+scripts refuse it too, so a mistake cannot open the site.
+
+**Prerequisite:** real email verification. Emails are still simulated, so public users
+could not verify their address and would be stuck after signing up. Do not switch until
+that is in place (see `docs/EMAIL_VERIFICATION_PLAN.md`).
+
+To switch (and to switch back, with `private`), on the droplet:
+
+```bash
+cd ~/safepay
+sed -i 's/^SITE_ACCESS=.*/SITE_ACCESS=public/' .env.staging   # add the line if it is missing
+docker compose -f compose.staging.yaml --env-file .env.staging up -d caddy
+scripts/staging-wait.sh && scripts/staging-smoke.sh
+```
+
+From your computer:
+
+```bash
+curl -sI https://safepay.dhdbot.xyz/ | head -1                   # 200 (public) / 401 (private)
+curl -sI https://safepay.dhdbot.xyz/admin | head -1              # 401 or 403, never 200
+curl -sI https://api.safepay.dhdbot.xyz/ | head -1               # 401
+```
 
 ## 10. Recovery
 

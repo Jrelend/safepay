@@ -14,6 +14,26 @@
 	}
 }
 
+# Who must present the shared basic-auth login on the web site (SITE_ACCESS):
+#   private (default)  everyone, on every path: the closed beta.
+#   public             only the admin area (/admin, /api/admin); the rest of the web app is
+#                      open and relies on the app's own login. Admins still also need an
+#                      allow-listed IP, their password and TOTP.
+# Any other value fails to load (no such snippet), so a typo never opens the site.
+# The API host stays behind basic auth in both modes.
+(site_access_private) {
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+}
+
+(site_access_public) {
+	@admin_area path /admin /admin/* /api/admin /api/admin/*
+	basic_auth @admin_area {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+}
+
 # Internal liveness endpoint for the container healthcheck (never published).
 http://127.0.0.1:8080 {
 	respond /healthz 200
@@ -29,16 +49,20 @@ http://127.0.0.1:8080 {
 
 	# Layer 1b: the admin area is restricted further.
 	@admin_outside {
-		path /admin /admin/* /api/admin/*
+		path /admin /admin/* /api/admin /api/admin/*
 		not remote_ip {$ADMIN_ALLOWED_IPS}
 	}
 	respond @admin_outside "Forbidden" 403
 
-	# Private access, layer 2: one shared credential for the whole beta site.
-	# The app's own login, CSRF and (for admins) password + TOTP still apply behind it.
-	basic_auth {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
+	# Local-development pages (simulated mailbox) are never served here; their API is
+	# already disabled (ENABLE_DEV_ROUTES=false, DEV_MAILBOX_ENABLED=false).
+	@dev_pages path /dev /dev/* /api/dev /api/dev/*
+	respond @dev_pages "Not Found" 404
+
+	# Private access, layer 2: one shared credential, for the whole site (private) or
+	# only the admin area (public); see the snippets above. The app's own login, CSRF
+	# and (for admins) password + TOTP still apply behind it.
+	import site_access_{$SITE_ACCESS}
 
 	encode zstd gzip
 
@@ -74,9 +98,8 @@ http://127.0.0.1:8080 {
 	@not_public path /admin /admin/* /docs /docs/* /redoc /openapi.json /health /ready /dev /dev/*
 	respond @not_public "Not Found" 404
 
-	basic_auth {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
+	# Always private, whatever SITE_ACCESS says.
+	import site_access_private
 
 	encode zstd gzip
 

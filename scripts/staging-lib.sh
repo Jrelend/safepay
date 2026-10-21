@@ -16,6 +16,13 @@ load_env() {
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   set +a
+  # Who must pass the edge basic auth on the web site (see infra/caddy/Caddyfile).
+  SITE_ACCESS="${SITE_ACCESS:-private}"
+  case "$SITE_ACCESS" in
+    private|public) ;;
+    *) echo "SITE_ACCESS must be 'private' or 'public' (got '$SITE_ACCESS'); refusing" >&2; exit 1 ;;
+  esac
+  export SITE_ACCESS
   POSTGRES_USER="${POSTGRES_USER:-postgres}"
   POSTGRES_DB="${POSTGRES_DB:-safepay}"
   BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
