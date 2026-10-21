@@ -475,9 +475,11 @@ Deploy history (time, from/to commit, backup used, schema) is kept in
 Any other value (including empty or a typo) makes Caddy refuse to start, and the deploy
 scripts refuse it too, so a mistake cannot open the site.
 
-**Prerequisite:** real email verification. Emails are still simulated, so public users
-could not verify their address and would be stuck after signing up. Do not switch until
-that is in place (see `docs/EMAIL_VERIFICATION_PLAN.md`).
+**Prerequisite:** public users must be able to finish signing up. Emails are still
+simulated, so without one of these they would be stuck after registering:
+- real email verification (`docs/EMAIL_VERIFICATION_PLAN.md`), or
+- the simulated-money public demo, `BETA_DEMO_MODE=true` (`docs/BETA_DEMO_MODE.md` and
+  `docs/PUBLIC_BETA_LAUNCH.md`, from the demo-mode change).
 
 To switch (and to switch back, with `private`), on the droplet:
 
