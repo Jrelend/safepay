@@ -191,7 +191,7 @@ jobs:
           psql() { docker compose exec -T db psql -U postgres -d safepay -v ON_ERROR_STOP=1 -At "$@"; }
           docker compose exec -T db pg_isready -h 127.0.0.1 -U postgres -d safepay
           test "$(docker compose ps -a migrate --format '{{.State}} {{.ExitCode}}')" = "exited 0"
-          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0005
+          psql -c "SELECT version_num FROM alembic_version" | tee /dev/stderr | grep -qx 0006
           psql -c "SHOW server_version_num" | grep -q '^17'
           # Roles exist, are not superusers, and the migrator owns everything.
           test "$(psql -c "SELECT string_agg(rolname || ':' || rolsuper, ',' ORDER BY rolname) FROM pg_roles WHERE rolname LIKE 'safepay_%'")" = "safepay_admin:false,safepay_app:false,safepay_migrator:false,safepay_system:false"
