@@ -77,9 +77,14 @@ from `.env.staging` on every deploy. This is a no-op when they already match.
   - The API refuses with `demo_mismatch`.
   - Two triggers refuse it again in the database: a deal's flag must equal its
     creator's, and every participant's flag must equal the deal's.
-- **Admins:** admins are staff with a **verified, non-demo** account.
-  `app.cli grant-admin` refuses unverified addresses. Admins decide demo disputes
-  through the admin API as `ADMIN`, never as a deal party.
+- **Admins:** `app.cli grant-admin` refuses any account whose email is not
+  verified. In demo mode, the operator verifies the admin's own account with the
+  `app.cli outbox` link (no tester can do this), then grants admin.
+  - The account's demo flag does not matter for admin powers. Those come only from the
+    separate admin password, TOTP and admin IP allow-list (and, with
+    `SITE_ACCESS=public`, the edge basic-auth login).
+  - Admins decide demo disputes through the admin API as `ADMIN`, never as a deal
+    party.
 - **Finding demo data later**, e.g. before any future real-money release:
 
   ```sql
@@ -121,7 +126,7 @@ two independent users).
 | **Cross-user data** | Deal lists include only the user's own deals. Demo and non-demo accounts cannot join each other's deals (API and DB triggers). | ✅ |
 | **Balance manipulation** | There is no endpoint that credits a wallet, and the wallet balance is derived from the immutable double-entry ledger (every transaction is balanced). The amount is frozen after submission. Funding is idempotent, and a second funding or release is refused. Simulated money leaves escrow exactly once. | ✅ |
 | **CSRF, Origin, rate limits** | Unchanged in demo mode: requests without a CSRF token or from a foreign Origin are refused (403), and the registration flood limit returns 429. | ✅ |
-| **Admin** | Password + TOTP + admin IP allow-list are unchanged. Demo accounts cannot be granted admin. An admin cannot decide a deal they are party to. | ✅ |
+| **Admin** | Password + TOTP + admin IP allow-list are unchanged. Testers cannot become admins: `grant-admin` needs a verified email, and only the operator can verify one (outbox CLI). An admin cannot decide a deal they are party to. | ✅ |
 | **Flag tampering** | The runtime role cannot UPDATE `is_demo` on users or deals, cannot change `platform_policy`, and cannot insert mixed participants or a deal flagged differently from its creator. | ✅ |
 | **Email-restricted invitations** *(found and fixed here)* | Invitations restricted to an email address trusted the joiner's address. In demo mode addresses are unverified, so anyone could register the invited address and take the invitation. **Fix:** a restricted invitation now requires a verified joiner. Unverified (demo) creators cannot set a restriction (`invite_email_unavailable`), and the form hides the field for them. | ✅ fixed |
 
