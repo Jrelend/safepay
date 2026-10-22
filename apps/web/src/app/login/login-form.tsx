@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
+import { Icon } from "@/components/icons";
 import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
+import { signInAsAdmin, signInAsParty, useDemoAccounts, type DemoAccount } from "@/lib/client/demo";
 import { safeNext, useSession } from "@/lib/client/session";
 import type { Me } from "@/lib/types";
+
+const DEMO_LABEL = { buyer: "Худалдан авагч", seller: "Худалдагч", admin: "Админ" } as const;
 
 export function LoginForm() {
   const router = useRouter();
@@ -19,6 +23,24 @@ export function LoginForm() {
   }, [refresh]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const demoAccounts = useDemoAccounts();
+
+  async function demoSignIn(account: DemoAccount) {
+    setBusy(true);
+    setError(null);
+    try {
+      if (account.key === "admin") {
+        await signInAsAdmin(account);
+        router.replace("/admin");
+      } else {
+        setMe(await signInAsParty(account));
+        router.replace("/dashboard");
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Алдаа гарлаа.");
+      setBusy(false);
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -49,6 +71,22 @@ export function LoginForm() {
         <div className="mb-4">
           <Alert tone="success">Нууц үг шинэчлэгдлээ. Шинэ нууц үгээрээ нэвтэрнэ үү.</Alert>
         </div>
+      ) : null}
+      {demoAccounts ? (
+        <Card className="mb-4 space-y-3" data-testid="demo-login">
+          <div>
+            <h2 className="text-sm font-semibold">Демо бүртгэлээр нэг товшилтоор нэвтрэх</h2>
+            <p className="text-muted text-[13px]">Туршилтын мөнгө. Бодит төлбөр огт хийгдэхгүй.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {demoAccounts.map((a) => (
+              <Button key={a.key} variant="secondary" disabled={busy} onClick={() => void demoSignIn(a)}>
+                <Icon name={a.key === "admin" ? "scale" : a.key === "buyer" ? "wallet" : "inbox"} className="size-4" />
+                {DEMO_LABEL[a.key]}
+              </Button>
+            ))}
+          </div>
+        </Card>
       ) : null}
       <Card>
         <form onSubmit={onSubmit} className="space-y-4">

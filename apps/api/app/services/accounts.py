@@ -76,23 +76,29 @@ def register(
 ) -> None:
     email = normalize_email(email)
     check_password_policy(password, email=email)
+    # LOCAL DEMO ONLY: accounts are verified at creation and no email is sent.
+    local_demo = settings.local_demo_enabled
     existing = db.scalar(select(User).where(User.email == email))
     if existing is not None:
         # Same visible outcome as a new registration; the owner is told by email.
         hash_password(password)  # keep timing comparable
-        _outbox(db, email, "account_exists", {"login_url": f"{settings.public_web_url}/login"})
+        if not local_demo:
+            _outbox(db, email, "account_exists", {"login_url": f"{settings.public_web_url}/login"})
         return
     user = User(
         email=email,
         password_hash=hash_password(password),
         display_name=display_name,
         is_demo=settings.beta_demo_mode,
+        email_verified_at=datetime.now(UTC) if local_demo else None,
     )
     db.add(user)
     try:
         db.flush()
     except IntegrityError:  # concurrent registration of the same email
         db.rollback()
+        return
+    if local_demo:
         return
     raw = _issue_token(db, user.id, TokenPurpose.VERIFY_EMAIL, VERIFY_TTL)
     _outbox(

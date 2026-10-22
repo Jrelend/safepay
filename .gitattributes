@@ -1,0 +1,7 @@
+# Keep LF line endings in the working tree on every platform. On Windows,
+# core.autocrlf=true would otherwise check files out with CRLF, which breaks scripts
+# run inside Linux containers (e.g. the Postgres initdb script) and source-parsing
+# tests. Windows batch files are the exception.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf

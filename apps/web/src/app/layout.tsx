@@ -3,6 +3,7 @@ import { Suspense } from "react";
 
 import { AppHeader } from "@/components/app-header";
 import { BottomNav } from "@/components/bottom-nav";
+import { DemoSwitcher } from "@/components/demo-switcher";
 import { SimulationBanner } from "@/components/simulation-banner";
 import { SessionProvider } from "@/lib/client/session";
 import { THEME_BOOTSTRAP } from "@/lib/client/theme";
@@ -41,6 +42,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </a>
         <SessionProvider>
           <SimulationBanner />
+          <Suspense fallback={null}>
+            <DemoSwitcher />
+          </Suspense>
           <AppHeader />
           <main id="main" className="mx-auto w-full max-w-5xl flex-1 px-4 pt-6 pb-10 sm:px-6 md:pt-8 md:pb-12">
             {children}

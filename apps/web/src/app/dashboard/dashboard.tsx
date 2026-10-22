@@ -4,9 +4,11 @@ import Link from "next/link";
 
 import { AuthGuard } from "@/components/auth-guard";
 import { DealCard } from "@/components/deal-card";
+import { DemoWalletDetails } from "@/components/demo-wallet";
 import { Icon } from "@/components/icons";
 import { TestPaymentNotice } from "@/components/test-payment-notice";
 import { Alert, ButtonLink, Card, EmptyState, Money, Skeleton } from "@/components/ui";
+import { useDemoAccounts } from "@/lib/client/demo";
 import { useApi } from "@/lib/client/use-api";
 import { summaryNeedsMe } from "@/lib/deal-flow";
 import type { DealSummary, Me, Wallet } from "@/lib/types";
@@ -15,6 +17,7 @@ function Content({ me }: { me: Me }) {
   const deals = useApi<DealSummary[]>("/deals?scope=active");
   const wallet = useApi<Wallet>("/me/wallet");
   const unread = useApi<{ unread: number }>("/me/notifications");
+  const localDemo = useDemoAccounts() !== null;
   const todo = (deals.data ?? []).filter(summaryNeedsMe);
   const waiting = (deals.data ?? []).filter((d) => !summaryNeedsMe(d));
   const unreadCount = unread.data?.unread ?? 0;
@@ -102,9 +105,13 @@ function Content({ me }: { me: Me }) {
             ) : (
               <div className="bg-surface-muted h-9 w-40 animate-pulse rounded" />
             )}
-            <p className="text-muted text-[13px] leading-snug">
-              Дууссан гэрээнээс танд шилжсэн эсвэл буцаж ирсэн туршилтын мөнгө.
-            </p>
+            {localDemo && wallet.data && deals.data ? (
+              <DemoWalletDetails wallet={wallet.data} deals={deals.data} />
+            ) : (
+              <p className="text-muted text-[13px] leading-snug">
+                Дууссан гэрээнээс танд шилжсэн эсвэл буцаж ирсэн туршилтын мөнгө.
+              </p>
+            )}
             <TestPaymentNotice />
           </Card>
           <Link

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { DemoFundPreview } from "@/components/demo-wallet";
 import { TestPaymentNotice } from "@/components/test-payment-notice";
 import { Alert, Button, Money, TextArea } from "@/components/ui";
 import { api, ApiError, newIdempotencyKey } from "@/lib/client/api";
@@ -85,6 +86,7 @@ export function ActionDialog({
               <div className="text-muted text-xs">{deal.title}</div>
               <Money value={deal.amount_mnt} className="text-2xl font-bold" />
             </div>
+            {action === "FUND" && deal.is_demo ? <DemoFundPreview amount={deal.amount_mnt} /> : null}
             <TestPaymentNotice detail="Бодит банк, карт, QPay ашиглагдахгүй. Ямар ч бодит мөнгө шилжихгүй." />
           </div>
         ) : null}

@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # are flagged in the database and never mixed with other accounts. All money is
     # simulated either way; refused in production.
     beta_demo_mode: bool = False
+    # LOCAL DEMO ONLY (presentations on one machine, see app/local_demo.py): mounts
+    # /demo/* for one-click switching between the seeded buyer, seller and admin, and
+    # lifts login rate limits for those seeded accounts. Refused unless APP_ENV is
+    # local or test.
+    local_demo: bool = False
 
     # Hard safety switch: SafePay Beta must never move real money. Any value
     # other than true is rejected at startup.
@@ -87,6 +92,8 @@ class Settings(BaseSettings):
         if self.app_env not in ("staging", "production"):
             return self
         problems = []
+        if self.local_demo:
+            problems.append("LOCAL_DEMO must be false")
         if self.dev_mailbox_enabled:
             problems.append("DEV_MAILBOX_ENABLED must be false")
         if self.app_env == "production" and self.beta_demo_mode:
@@ -110,6 +117,10 @@ class Settings(BaseSettings):
     @property
     def mailbox_enabled(self) -> bool:
         return self.dev_mailbox_enabled and self.app_env in ("local", "test")
+
+    @property
+    def local_demo_enabled(self) -> bool:
+        return self.local_demo and self.app_env in ("local", "test")
 
 
 @lru_cache

@@ -105,6 +105,7 @@ export function Card({
   as?: "section" | "div" | "article";
   "aria-labelledby"?: string;
   "aria-label"?: string;
+  "data-testid"?: string;
 }) {
   return (
     <Tag {...rest} className={`bg-surface border-border shadow-card rounded-2xl border p-4 sm:p-5 ${className}`}>

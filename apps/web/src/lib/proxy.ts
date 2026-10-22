@@ -35,7 +35,7 @@ export type Upstream = { base: string; path: string };
 
 export function resolveUpstream(
   segments: readonly string[],
-  env: { publicUrl: string; adminUrl: string | undefined; devRoutes?: boolean },
+  env: { publicUrl: string; adminUrl: string | undefined; devRoutes?: boolean; demoRoutes?: boolean },
 ): Upstream | null {
   if (segments.length === 0 || segments.length > 8) return null;
   if (!segments.every((s) => SEGMENT.test(s) && s !== "." && s !== "..")) return null;
@@ -47,6 +47,8 @@ export function resolveUpstream(
   if (["health", "ready", "docs", "openapi.json", "redoc"].includes(segments[0])) return null;
   // Local-development helpers (simulated mailbox) only when explicitly enabled.
   if (segments[0] === "dev" && !env.devRoutes) return null;
+  // Local demo helpers (one-click account switching) only when explicitly enabled.
+  if (segments[0] === "demo" && !env.demoRoutes) return null;
   return { base: env.publicUrl, path };
 }
 

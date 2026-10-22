@@ -5,6 +5,7 @@ import { defineConfig, devices } from "@playwright/test";
  * Each web origin must be the one its API allows (Origin check):
  *   "standard" → http://localhost:3000 (email verification required)
  *   "demo"     → http://localhost:3001 (BETA_DEMO_MODE, demo-*.spec.ts)
+ *   "local-demo" → http://localhost:3002 (LOCAL_DEMO seeded accounts, localdemo.spec.ts)
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -23,11 +24,16 @@ export default defineConfig({
     launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
   },
   projects: [
-    { name: "standard", testIgnore: /demo-.*\.spec\.ts/ },
+    { name: "standard", testIgnore: /(demo-.*|localdemo)\.spec\.ts/ },
     {
       name: "demo",
       testMatch: /demo-.*\.spec\.ts/,
       use: { baseURL: process.env.E2E_DEMO_BASE_URL ?? "http://localhost:3001" },
+    },
+    {
+      name: "local-demo",
+      testMatch: /localdemo\.spec\.ts/,
+      use: { baseURL: process.env.E2E_LOCAL_DEMO_BASE_URL ?? "http://localhost:3002" },
     },
   ],
 });

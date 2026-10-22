@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 
+from app import local_demo
 from app.api.auth_context import CSRF_HEADER, UNSAFE_METHODS, AuthContext, client_ip
 from app.api.deps import SettingsDep
 from app.api.errors import ApiError
@@ -68,12 +69,14 @@ def login(
     body: AdminLoginIn, request: Request, response: Response, settings: SettingsDep
 ) -> AdminMeOut:
     ip = client_ip(request, settings)
-    _limit(request, rl.ADMIN_LOGIN_PER_IP, ip)
     try:
         email = normalize_email(body.email)
     except InvalidEmailError:
         email = body.email.strip().lower()
-    _limit(request, rl.ADMIN_LOGIN_PER_EMAIL, email)
+    # LOCAL DEMO ONLY: the seeded admin signs in repeatedly during a presentation.
+    if not (settings.local_demo_enabled and email == local_demo.ADMIN.email):
+        _limit(request, rl.ADMIN_LOGIN_PER_IP, ip)
+        _limit(request, rl.ADMIN_LOGIN_PER_EMAIL, email)
     now = datetime.now(UTC)
     with request.app.state.sessionmaker() as db:
         row = db.execute(

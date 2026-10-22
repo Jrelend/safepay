@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import local_demo
 from app.api.auth_context import AuthContext, CurrentUser, VerifiedUser, client_ip
 from app.api.deps import SettingsDep
 from app.api.errors import ApiError
@@ -30,7 +31,7 @@ from app.domain.deal_terms import (
     IncompatibleTermsError,
     ItemType,
 )
-from app.models import LedgerEntry, ParticipantRole
+from app.models import LedgerEntry, ParticipantRole, User
 from app.services import deal_transitions as dt
 from app.services import deals as svc
 from app.services import rate_limit as rl
@@ -182,6 +183,22 @@ def create_deal(
                 invite_email=invite_email,
                 request_id=_request_id(request),
             )
+            # LOCAL DEMO ONLY: a deal between the seeded buyer and seller starts with
+            # both parties, so the presenter needs no invite link (normal join checks).
+            if (
+                settings.local_demo_enabled
+                and ctx.email in local_demo.PARTY_EMAILS
+                and invite_email in local_demo.PARTY_EMAILS
+            ):
+                joiner = db.scalar(select(User).where(User.email == invite_email))
+                if joiner is not None:
+                    svc.join_deal(
+                        db,
+                        token=token,
+                        user_id=joiner.id,
+                        email=joiner.email,
+                        request_id=_request_id(request),
+                    )
     except IncompatibleTermsError as exc:
         raise ApiError(422, "incompatible_terms", str(exc)) from exc
     return CreatedDealOut(
@@ -322,6 +339,7 @@ _TRANSITION_ERRORS: dict[type[dt.DealTransitionError], tuple[int, str]] = {
     dt.EscrowInvariantError: (409, "escrow_invariant"),
     dt.UserNotEligibleError: (403, "email_not_verified"),
     dt.ReasonRequiredError: (422, "reason_required"),
+    dt.InsufficientDemoBalanceError: (409, "insufficient_demo_balance"),
 }
 
 

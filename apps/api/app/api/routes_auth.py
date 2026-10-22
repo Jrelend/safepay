@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import local_demo
 from app.api.auth_context import (
     CurrentUser,
     client_ip,
@@ -167,7 +168,9 @@ def register(
         raise ApiError(422, "invalid_email", "email address is not valid") from exc
     except WeakPasswordError as exc:
         raise ApiError(422, "weak_password", str(exc)) from exc
-    return RegisterAccepted(verification_required=not settings.beta_demo_mode)
+    return RegisterAccepted(
+        verification_required=not (settings.beta_demo_mode or settings.local_demo_enabled)
+    )
 
 
 @router.post("/auth/verify-email")
@@ -201,8 +204,10 @@ def login(
     body: LoginIn, request: Request, response: Response, db: DbDep, settings: SettingsDep
 ) -> MeOut:
     ip = client_ip(request, settings)
-    limit(request, rl.LOGIN_PER_IP, ip)
-    limit(request, rl.LOGIN_PER_EMAIL, email_key(body.email))
+    # LOCAL DEMO ONLY: the seeded accounts switch back and forth during a presentation.
+    if not (settings.local_demo_enabled and email_key(body.email) in local_demo.PERSONA_EMAILS):
+        limit(request, rl.LOGIN_PER_IP, ip)
+        limit(request, rl.LOGIN_PER_EMAIL, email_key(body.email))
     try:
         with atomic(db):
             user = accounts.authenticate(db, email=body.email, password=body.password)

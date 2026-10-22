@@ -8,6 +8,7 @@ import { DealTermsFields, readTerms } from "@/components/deal-terms-fields";
 import { Icon } from "@/components/icons";
 import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
+import { demoKeyOf, useDemoAccounts } from "@/lib/client/demo";
 import { focusFirstInvalid } from "@/lib/client/focus";
 import type { Deal, Role } from "@/lib/types";
 
@@ -34,10 +35,19 @@ function Section({ n, title, children }: { n: number; title: string; children: R
 }
 
 /** `canRestrictInvite`: demo accounts (unverified email) cannot restrict invitations by email. */
-function Form({ canRestrictInvite }: { canRestrictInvite: boolean }) {
+function Form({ canRestrictInvite, myEmail }: { canRestrictInvite: boolean; myEmail: string }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
-  const [role, setRole] = useState<Role>("SELLER");
+  // LOCAL DEMO: the seeded buyer starts as buyer, and the other seeded party is
+  // pre-filled as the counterparty (the API then adds them to the deal directly).
+  const demoAccounts = useDemoAccounts();
+  const myDemo = demoKeyOf(demoAccounts, myEmail);
+  const [roleChoice, setRole] = useState<Role | null>(null);
+  const role: Role = roleChoice ?? (myDemo === "buyer" ? "BUYER" : "SELLER");
+  const demoCounterparty =
+    myDemo === "buyer" || myDemo === "seller"
+      ? demoAccounts?.find((a) => a.key === (role === "BUYER" ? "seller" : "buyer"))
+      : undefined;
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -121,11 +131,17 @@ function Form({ canRestrictInvite }: { canRestrictInvite: boolean }) {
         {canRestrictInvite ? (
           <Section n={3} title="Хэнтэй (заавал биш)">
             <Field
+              key={demoCounterparty?.email ?? "none"}
               label={`${other} имэйл (заавал биш)`}
               name="counterparty_email"
               type="email"
               autoComplete="off"
-              hint="Бичвэл урилгын холбоосоор зөвхөн энэ имэйлээр бүртгэлтэй хүн нэгдэж чадна."
+              defaultValue={demoCounterparty?.email}
+              hint={
+                demoCounterparty
+                  ? `Демо: ${demoCounterparty.display_name} гэрээнд шууд нэмэгдэнэ.`
+                  : "Бичвэл урилгын холбоосоор зөвхөн энэ имэйлээр бүртгэлтэй хүн нэгдэж чадна."
+              }
             />
           </Section>
         ) : null}
@@ -143,5 +159,5 @@ function Form({ canRestrictInvite }: { canRestrictInvite: boolean }) {
 }
 
 export function NewDealForm() {
-  return <AuthGuard verified>{(me) => <Form canRestrictInvite={me.email_verified} />}</AuthGuard>;
+  return <AuthGuard verified>{(me) => <Form canRestrictInvite={me.email_verified} myEmail={me.email} />}</AuthGuard>;
 }

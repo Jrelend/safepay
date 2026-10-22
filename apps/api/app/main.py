@@ -126,6 +126,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from app.api import routes_dev  # noqa: PLC0415
 
             app.include_router(routes_dev.router)
+        if settings.local_demo_enabled:
+            from app.api import routes_demo  # noqa: PLC0415
+
+            app.include_router(routes_demo.router)
     else:
         from app.api import admin_auth, routes_admin  # noqa: PLC0415
 

@@ -90,6 +90,12 @@ class AutoReleaseDisabledError(DealTransitionError):
     sqlstate = "SPD10"
 
 
+class InsufficientDemoBalanceError(DealTransitionError):
+    """Local demo: the buyer's simulated wallet holds less than the deal amount."""
+
+    sqlstate = "SPD11"
+
+
 _ERRORS: dict[str, type[DealTransitionError]] = {
     cls.sqlstate: cls
     for cls in (
@@ -103,6 +109,7 @@ _ERRORS: dict[str, type[DealTransitionError]] = {
         NotYetEligibleError,
         NotAdministratorError,
         AutoReleaseDisabledError,
+        InsufficientDemoBalanceError,
     )
 }
 

@@ -15,6 +15,13 @@ disputes.
 | Database | PostgreSQL 17 |
 | Tooling | uv, Ruff, mypy, pytest, ESLint, Vitest, Docker Compose, GitHub Actions |
 
+## Local demo for presentations (Windows)
+
+Double-click `scripts\demo-start.cmd`, then open http://localhost:3000. It comes with
+a seeded buyer (10,000,000 ₮ of simulated money), a seller and an admin, plus
+one-click account switching. Run `scripts\demo-reset.cmd` to start over. See
+[docs/LOCAL_DEMO.md](docs/LOCAL_DEMO.md).
+
 ## Quick start (Docker)
 
 ```bash
@@ -71,6 +78,7 @@ allowed `Origin`.
 
 ## Documentation
 
+* [Local demo: presenter guide and isolation](docs/LOCAL_DEMO.md)
 * [Architecture](docs/ARCHITECTURE.md)
 * [Transaction states](docs/transaction-states.md)
 * [Security requirements and database security model](docs/SECURITY.md)

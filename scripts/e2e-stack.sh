@@ -6,7 +6,9 @@
 #
 # Starts: public API :8000 (safepay_app), admin API :8001 (safepay_admin),
 # web :3000 (next start); and, sharing the same database, a BETA_DEMO_MODE pair:
-# public API :8002 + web :3001 (demo-*.spec.ts). Logs go to $E2E_LOG_DIR.
+# public API :8002 + web :3001 (demo-*.spec.ts). On a second, seeded database: the
+# LOCAL_DEMO trio public API :8003 + admin API :8004 + web :3002 (localdemo.spec.ts).
+# Logs go to $E2E_LOG_DIR.
 # All payments are simulated.
 set -euo pipefail
 
@@ -50,16 +52,40 @@ env "${common[@]}" API_MODE=admin DEV_MAILBOX_ENABLED=false \
   DATABASE_URL="postgresql+psycopg://safepay_admin:$ADMIN_PW@$HOST/$E2E_DB" \
   nohup uv run uvicorn app.main:app --port 8001 >"$LOG_DIR/admin-api.log" 2>&1 &
 
+# LOCAL_DEMO on its own database: its demo-wallet policy (demo deals pay from the
+# buyer's wallet) must not touch the BETA_DEMO_MODE accounts above.
+DEMO_DB="${E2E_DB%_e2e}_localdemo_e2e"
+DEMO_MIGRATION_URL="postgresql+psycopg://safepay_migrator:$MIGRATOR_PW@$HOST/$DEMO_DB"
+psql -d postgres -v ON_ERROR_STOP=1 -qc "DROP DATABASE IF EXISTS $DEMO_DB WITH (FORCE)"
+psql -d postgres -v ON_ERROR_STOP=1 -qc "CREATE DATABASE $DEMO_DB"
+psql -d "$DEMO_DB" -v ON_ERROR_STOP=1 -q -v dbname="$DEMO_DB" \
+  -v migrator_password="$MIGRATOR_PW" -v app_password="$APP_PW" \
+  -v system_password="$SYSTEM_PW" -v admin_password="$ADMIN_PW" \
+  -f "$ROOT/infra/postgres/bootstrap-roles.sql" >/dev/null
+MIGRATION_DATABASE_URL="$DEMO_MIGRATION_URL" uv run alembic upgrade head
+MIGRATION_DATABASE_URL="$DEMO_MIGRATION_URL" APP_ENV=test uv run python -m app.cli demo-seed
+demo=(APP_ENV=test LOCAL_DEMO=true PUBLIC_WEB_URL=http://localhost:3002
+      'CORS_ALLOWED_ORIGINS=["http://localhost:3002"]' TRUST_PROXY_HEADERS=true)
+env "${demo[@]}" API_MODE=public \
+  DATABASE_URL="postgresql+psycopg://safepay_app:$APP_PW@$HOST/$DEMO_DB" \
+  nohup uv run uvicorn app.main:app --port 8003 >"$LOG_DIR/api-localdemo.log" 2>&1 &
+env "${demo[@]}" API_MODE=admin \
+  DATABASE_URL="postgresql+psycopg://safepay_admin:$ADMIN_PW@$HOST/$DEMO_DB" \
+  nohup uv run uvicorn app.main:app --port 8004 >"$LOG_DIR/admin-api-localdemo.log" 2>&1 &
+
 cd "$ROOT/apps/web"
 API_INTERNAL_URL=http://127.0.0.1:8000 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8001 PORT=3000 ENABLE_DEV_ROUTES=true \
   nohup npx next start >"$LOG_DIR/web.log" 2>&1 &
 API_INTERNAL_URL=http://127.0.0.1:8002 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8001 PORT=3001 \
   nohup npx next start >"$LOG_DIR/web-demo.log" 2>&1 &
+API_INTERNAL_URL=http://127.0.0.1:8003 ADMIN_API_INTERNAL_URL=http://127.0.0.1:8004 PORT=3002 \
+  ENABLE_DEMO_ROUTES=true nohup npx next start >"$LOG_DIR/web-localdemo.log" 2>&1 &
 
 # :8000 is not "ready" by design here: its BETA_DEMO_MODE (off) differs from the shared
 # database's demo policy (on), which /ready reports. Liveness is enough for it.
 for url in http://127.0.0.1:8000/health http://127.0.0.1:8001/ready http://127.0.0.1:8002/ready \
-           http://127.0.0.1:3000/ http://127.0.0.1:3001/; do
+           http://127.0.0.1:8003/ready http://127.0.0.1:8004/ready \
+           http://127.0.0.1:3000/ http://127.0.0.1:3001/ http://127.0.0.1:3002/; do
   curl -fsS --retry 40 --retry-delay 1 --retry-all-errors -o /dev/null "$url"
 done
 echo "E2E stack ready (db=$E2E_DB). Admin grants: MIGRATION_DATABASE_URL=$MIGRATION_DATABASE_URL"

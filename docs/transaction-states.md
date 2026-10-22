@@ -33,6 +33,11 @@ any status change that is not an edge in this table, for every role. See
 | DISPUTED | RESOLVE_RELEASE | COMPLETED | admin | **release to seller** |
 | DISPUTED | RESOLVE_REFUND | REFUNDED | admin | **refund to buyer** |
 
+**Hold in escrow** moves the amount from the platform's `SIMULATED_CASH` account
+into the deal's escrow. Local demo only: while `platform_policy.demo_wallets_enabled`
+is on, a **demo** deal's hold comes from the buyer's simulated wallet instead
+(migration 0007, [LOCAL_DEMO.md](LOCAL_DEMO.md)).
+
 Terminal states: `COMPLETED`, `REFUNDED`, `CANCELLED`, `EXPIRED`.
 Escrow-held states: `FUNDED`, `DELIVERED`, `DISPUTED`.
 

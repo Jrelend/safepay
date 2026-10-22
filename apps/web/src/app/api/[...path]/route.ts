@@ -13,6 +13,7 @@ function env() {
     publicUrl: process.env.API_INTERNAL_URL ?? "http://localhost:8000",
     adminUrl: process.env.ADMIN_API_INTERNAL_URL,
     devRoutes: process.env.ENABLE_DEV_ROUTES === "true",
+    demoRoutes: process.env.ENABLE_DEMO_ROUTES === "true",
   };
 }
 

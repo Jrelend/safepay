@@ -1,0 +1,28 @@
+# SafePay LOCAL DEMO overlay: presentations on this machine only. Never on a server.
+#
+#   docker compose -f compose.yaml -f compose.demo.yaml up -d --build
+#   (or scripts\demo-start.cmd / scripts\demo-reset.cmd on Windows)
+#
+# On top of the normal local stack it:
+#   * seeds a demo buyer (10,000,000 MNT of simulated money), seller and admin,
+#     and lets demo deals pay from the buyer's simulated wallet
+#     (`python -m app.cli demo-seed`, idempotent, refused unless APP_ENV is local/test);
+#   * turns on LOCAL_DEMO in the APIs (one-click account switching, demo admin code;
+#     the APIs refuse to start with it in staging/production);
+#   * lets the web proxy forward /api/demo/*.
+# Everything is simulated: there is no bank or payment integration anywhere.
+services:
+  migrate:
+    command: ["sh", "-c", "alembic upgrade head && python -m app.cli demo-seed"]
+
+  api:
+    environment:
+      LOCAL_DEMO: "true"
+
+  admin-api:
+    environment:
+      LOCAL_DEMO: "true"
+
+  web:
+    environment:
+      ENABLE_DEMO_ROUTES: "true"

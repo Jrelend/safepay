@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 import { Icon } from "@/components/icons";
 import { Alert, Button, Card, Field, PageTitle, WIDTH } from "@/components/ui";
 import { api, ApiError } from "@/lib/client/api";
+import { signInAsAdmin, useDemoAccounts } from "@/lib/client/demo";
 
 function safeAdminNext(next: string | null): string {
   return next && next.startsWith("/admin") && !next.startsWith("//") ? next : "/admin";
@@ -16,6 +17,20 @@ export function AdminLoginForm() {
   const params = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const demoAdmin = useDemoAccounts()?.find((a) => a.key === "admin");
+
+  async function demoSignIn() {
+    if (!demoAdmin) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signInAsAdmin(demoAdmin);
+      router.replace(safeAdminNext(params.get("next")));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Алдаа гарлаа.");
+      setBusy(false);
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -52,6 +67,17 @@ export function AdminLoginForm() {
         title="Админ нэвтрэх"
         subtitle="Зөвхөн SafePay ажилтанд. Тусдаа админ нууц үг болон баталгаажуулах апп-ын 6 оронтой код шаардлагатай."
       />
+      {demoAdmin ? (
+        <Card className="mb-4 space-y-3" data-testid="demo-admin-login">
+          <p className="text-muted text-[13px]">
+            Демо орчин: админ нууц үг болон 6 оронтой кодыг автоматаар бөглөнө.
+          </p>
+          <Button variant="secondary" className="w-full" disabled={busy} onClick={() => void demoSignIn()}>
+            <Icon name="scale" className="size-4" />
+            Демо админаар нэвтрэх
+          </Button>
+        </Card>
+      ) : null}
       <Card>
         <form onSubmit={onSubmit} className="space-y-4">
           <Field label="Имэйл" name="email" type="email" required autoComplete="username" />

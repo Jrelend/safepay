@@ -34,6 +34,18 @@ def test_beta_demo_mode_is_off_by_default() -> None:
     assert Settings().beta_demo_mode is False
 
 
+def test_local_demo_is_off_by_default_and_refused_when_deployed() -> None:
+    assert Settings().local_demo is False
+    assert Settings(app_env="local", local_demo=True).local_demo_enabled
+    deployed = {
+        "public_web_url": "https://safepay.example",
+        "cors_allowed_origins": ["https://safepay.example"],
+    }
+    for env in ("staging", "production"):
+        with pytest.raises(ValueError, match="LOCAL_DEMO must be false"):
+            Settings(app_env=env, local_demo=True, **deployed)  # type: ignore[arg-type]
+
+
 def test_production_refuses_beta_demo_mode() -> None:
     prod = {
         "app_env": "production",

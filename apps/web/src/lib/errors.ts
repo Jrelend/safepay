@@ -23,6 +23,7 @@ const MESSAGES: Record<string, string> = {
   action_not_allowed: "Энэ үйлдлийг одоогийн төлөвт хийх боломжгүй.",
   participants_incomplete: "Хоёр тал гэрээнд нэгдсэний дараа үргэлжлүүлнэ үү.",
   escrow_invariant: "Барьцааны дүн таарахгүй байна. Үйлдлийг цуцаллаа.",
+  insufficient_demo_balance: "Туршилтын хэтэвчийн үлдэгдэл хүрэлцэхгүй байна.",
   reason_required: "Шалтгаанаа бичнэ үү.",
   idempotency_key_reused: "Энэ хүсэлт өмнө нь өөр утгатай илгээгдсэн байна. Хуудсаа дахин ачаална уу.",
   invite_not_found: "Урилгын холбоос хүчингүй байна.",

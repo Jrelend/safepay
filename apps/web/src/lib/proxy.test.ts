@@ -70,6 +70,12 @@ describe("dev routes and body cap", () => {
     expect(resolveUpstream(["dev", "mailbox"], { ...env, devRoutes: true })?.path).toBe("/dev/mailbox");
   });
 
+  it("forwards /demo only when explicitly enabled", () => {
+    expect(resolveUpstream(["demo", "accounts"], env)).toBeNull();
+    expect(resolveUpstream(["demo", "accounts"], { ...env, devRoutes: true })).toBeNull();
+    expect(resolveUpstream(["demo", "accounts"], { ...env, demoRoutes: true })?.path).toBe("/demo/accounts");
+  });
+
   function stream(chunks: number[]): ReadableStream<Uint8Array> {
     return new ReadableStream({
       start(c) {

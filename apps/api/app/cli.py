@@ -8,6 +8,7 @@ owner credential (MIGRATION_DATABASE_URL). The admin API cannot create admins.
     python -m app.cli set-auto-release off --note "beta policy"   # default: off
     python -m app.cli set-beta-demo on --note "public beta demo"   # default: off
     python -m app.cli outbox tester@example.com   # simulated emails (no real email yet)
+    python -m app.cli demo-seed   # LOCAL DEMO ONLY: seeded accounts + buyer wallet
 """
 
 import argparse
@@ -16,6 +17,7 @@ import sys
 
 from sqlalchemy import Connection, Engine, create_engine, text
 
+from app import local_demo
 from app.core import totp
 from app.core.config import get_settings
 from app.core.security import WeakPasswordError, check_password_policy, hash_password
@@ -214,6 +216,19 @@ def show_outbox(email: str, limit: int) -> None:
         print(f"{created_at:%Y-%m-%d %H:%M} {template}: {data.get('link', '')}")
 
 
+def demo_seed() -> None:
+    """Owner-only, LOCAL DEMO ONLY: the seeded buyer, seller and admin, the buyer's
+    starting balance, and the demo-wallet policy (see app/local_demo.py). Idempotent."""
+    settings = get_settings()
+    if settings.app_env not in ("local", "test"):
+        sys.exit(f"demo-seed is for local demos only (APP_ENV={settings.app_env})")
+    with _engine().begin() as conn:
+        local_demo.seed(conn)
+    for p in local_demo.PERSONAS:
+        print(f"demo {p.key}: {p.email}")
+    print(f"demo buyer balance: {local_demo.BUYER_STARTING_BALANCE_MNT:,} MNT (simulated)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -235,6 +250,7 @@ def main() -> None:
     o = sub.add_parser("outbox")
     o.add_argument("email")
     o.add_argument("--limit", type=int, default=5)
+    sub.add_parser("demo-seed")
     args = parser.parse_args()
     if args.command == "grant-admin":
         grant_admin(args.email, args.note, password_stdin=args.password_stdin)
@@ -246,6 +262,8 @@ def main() -> None:
         set_auto_release(args.state == "on", args.note)
     elif args.command == "set-beta-demo":
         set_beta_demo(args.state in ("on", "true"), args.note)
+    elif args.command == "demo-seed":
+        demo_seed()
     else:
         show_outbox(args.email, args.limit)
 

@@ -25,5 +25,8 @@ class PlatformPolicy(Base):
     # BETA_DEMO_MODE's database-side key: while false, the transition function refuses
     # unverified actors even if the API lets demo accounts through. Owner-only.
     beta_demo_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    # LOCAL DEMO ONLY (migration 0007): demo deals are funded from the buyer's simulated
+    # wallet instead of SIMULATED_CASH. Owner-only, set by ``app.cli demo-seed``.
+    demo_wallets_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     note: Mapped[str] = mapped_column(String(200), server_default="")

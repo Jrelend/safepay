@@ -107,7 +107,13 @@ function Detail() {
   return (
     <div className="space-y-4">
       <PageTitle title={d.title} subtitle={`${d.reference}${d.is_demo ? " · DEMO" : ""} · Та: ${ROLE_LABEL[d.my_role]}`} back="/deals" />
-      {created ? <Alert tone="success">Гэрээ үүслээ. Одоо нөгөө талыг урина уу.</Alert> : null}
+      {created ? (
+        <Alert tone="success">
+          {d.counterparty_name
+            ? `Гэрээ үүслээ. ${d.counterparty_name} гэрээнд нэгдсэн.`
+            : "Гэрээ үүслээ. Одоо нөгөө талыг урина уу."}
+        </Alert>
+      ) : null}
       {notice ? (
         <Alert tone="success" focusRef={noticeRef}>
           {notice}
